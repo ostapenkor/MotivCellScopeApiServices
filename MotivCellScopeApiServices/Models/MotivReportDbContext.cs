@@ -44,10 +44,7 @@ public partial class MotivReportDbContext : DbContext
 
     public virtual DbSet<Vendor> Vendors { get; set; }
 
-    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
-#warning To protect potentially sensitive information in your connection string, you should move it out of source code. You can avoid scaffolding the connection string by using the Name= syntax to read it from configuration - see https://go.microsoft.com/fwlink/?linkid=2131148. For more guidance on storing connection strings, see https://go.microsoft.com/fwlink/?LinkId=723263.
-        => optionsBuilder.UseMySql("server=127.0.0.1;port=3306;database=motiv_report;user=root;password=sasasasa13", Microsoft.EntityFrameworkCore.ServerVersion.Parse("13.0.2-mariadb"));
-
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder) { }
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder
