@@ -361,3 +361,10 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+/MotivCellScopeApiServices/db_password.txt
+/MotivCellScopeApiServices/db_root_password.txt
+/MotivCellScopeApiServices/db_user.txt
+/db_password.txt
+/db_root_password.txt
+/db_user.txt
+/.env
