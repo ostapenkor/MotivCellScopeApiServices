@@ -1,0 +1,6 @@
+@MotivCellScopeApiServices_HostAddress = http://localhost:5205
+
+GET {{MotivCellScopeApiServices_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
