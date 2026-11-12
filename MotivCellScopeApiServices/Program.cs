@@ -1,5 +1,9 @@
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi.Models;
 using MotivCellScopeApiServices.Models;
+using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -17,9 +21,13 @@ var baseConnectionString = builder.Configuration.GetConnectionString("MotivRepor
 // 3. Достаем логин и пароль напрямую из Docker Secrets (внутри памяти контейнера)
 var dbUser = builder.Configuration["db_user"] ?? "admin"; // admin - значение по умолчанию
 var dbPassword = builder.Configuration["db_password"];
+var jwtKey = builder.Configuration["jwt_key"];
 
 // 4. Склеиваем всё в одну полноценную строку подключения программно
 var finalConnectionString = $"{baseConnectionString}user={dbUser};password={dbPassword};";
+
+// 3. Кладем прочитанный ключ в память конфигурации, чтобы AuthController и JwtBearer его увидели
+builder.Configuration["Jwt:Key"] = jwtKey;
 
 // 5. Регистрируем контекст базы данных
 builder.Services.AddDbContext<MotivReportDbContext>(options =>
@@ -31,7 +39,54 @@ builder.Services.AddDbContext<MotivReportDbContext>(options =>
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+
+//код который позволяет в swagger, авторизоваться и вставить токен
+builder.Services.AddSwaggerGen(options =>
+{
+    // 1. Описываем схему безопасности (кнопку Authorize в интерфейсе)
+    options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Name = "Authorization",
+        Type = SecuritySchemeType.Http,
+        Scheme = "Bearer",
+        BearerFormat = "JWT",
+        In = ParameterLocation.Header,
+        Description = "Вставьте сюда ваш JWT-токен, полученный из /api/auth/login"
+    });
+
+    // 2. Указываем Swagger, что этот токен нужно прикреплять к защищенным запросам
+    options.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference
+                {
+                    Type = ReferenceType.SecurityScheme,
+                    Id = "Bearer"
+                }
+            },
+            Array.Empty<string>()
+        }
+    });
+});
+
+
+//настройка аутентификации
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            ValidIssuer = builder.Configuration["Jwt:Issuer"],
+            ValidAudience = builder.Configuration["Jwt:Audience"],
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]!))
+        };
+    });
 
 var app = builder.Build();
 
@@ -44,6 +99,8 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
+
+app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();

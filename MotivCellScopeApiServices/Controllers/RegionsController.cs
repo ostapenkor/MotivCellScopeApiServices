@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using MotivCellScopeApiServices.Models;
 using System.Collections.ObjectModel;
@@ -9,6 +10,7 @@ namespace MotivCellScopeApiServices.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
+    [Authorize]
     public class RegionsController : ControllerBase
     {
         // 1. Объявляем приватное поле
@@ -20,6 +22,7 @@ namespace MotivCellScopeApiServices.Controllers
             _db = db;
         }
 
+        
         [HttpGet]
         public IEnumerable<Region> GetRegions()
         {
@@ -40,16 +43,6 @@ namespace MotivCellScopeApiServices.Controllers
         {
         }
 
-        // PUT api/<ValuesController>/5
-        [HttpPut("{id}")]
-        public void Put(int id, [FromBody] string value)
-        {
-        }
-
-        // DELETE api/<ValuesController>/5
-        [HttpDelete("{id}")]
-        public void Delete(int id)
-        {
-        }
+        
     }
 }

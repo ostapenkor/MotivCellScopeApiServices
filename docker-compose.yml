@@ -19,6 +19,8 @@ services:
       - db_root_password
       - db_user
       - db_password
+    ports: 
+      - "3306:3306"
     networks:
       - motiv-backend-net
 
@@ -37,6 +39,7 @@ services:
     secrets:
       - db_user
       - db_password   
+      - jwt_key
     networks:
       - motiv-backend-net
 
@@ -48,6 +51,8 @@ secrets:
     environment: "DB_USER"
   db_password:
     environment: "DB_PASSWORD"
+  jwt_key:
+    environment: "JWT_SECRET_KEY"
 
 volumes:
   motiv_db_data:
