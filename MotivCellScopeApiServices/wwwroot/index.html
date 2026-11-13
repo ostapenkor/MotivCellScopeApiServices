@@ -1,0 +1,663 @@
+<!doctype html>
+<html lang="ru">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="color-scheme" content="light">
+        <title>
+            МОТИВ · Журнал аварий
+        </title>
+        <link rel="stylesheet" href="styles.css">
+        <script src="app.js" defer>
+        </script>
+    </head>
+    <body>
+        <header class="site-header">
+            <a class="brand" href="#" id="brand">
+                мотив
+                <span>
+                    ОПЕРАТИВНЫЙ ЖУРНАЛ
+                </span>
+            </a>
+            <div id="session" class="session" hidden>
+                <span id="session-name">
+                </span>
+                <button id="logout" class="button button-quiet" type="button">
+                    Выйти
+                </button>
+            </div>
+        </header>
+        <main id="login-screen" class="login-layout">
+            <section class="login-intro">
+                <p class="eyebrow">
+                    ЦЕНТР ОПЕРАТИВНОГО УПРАВЛЕНИЯ
+                </p>
+                <h1>
+                    Состояние сети.
+                    <br>
+                    Под контролем.
+                </h1>
+                <p class="lead">
+                    Регистрируйте аварии, отслеживайте восстановление связи и готовьте отчёты в одном журнале.
+                </p>
+                <div class="intro-note">
+                    <span class="signal-dot">
+                    </span>
+                    Один журнал — для дежурного, инженера и администратора
+                </div>
+            </section>
+            <section class="panel login-card">
+                <p class="eyebrow">
+                    ДОСТУП К СИСТЕМЕ
+                </p>
+                <h2>
+                    Вход в журнал
+                </h2>
+                <p class="muted">
+                    Используйте выданные вам логин и пароль.
+                </p>
+                <form id="login-form">
+                    <div id="login-error" class="message message-error" role="alert" hidden>
+                    </div>
+                    <label for="login-name">
+                        Логин
+                    </label>
+                    <input id="login-name" name="username" autocomplete="username" maxlength="64" required>
+                    <label for="login-password">
+                        Пароль
+                    </label>
+                    <input id="login-password" name="password" type="password" autocomplete="current-password" required>
+                    <button class="button button-primary full-width" type="submit">
+                        Войти в систему →
+                    </button>
+                </form>
+                <p class="small muted">
+                    После обновления страницы потребуется войти заново. Токен хранится только в памяти страницы.
+                </p>
+            </section>
+        </main>
+        <div id="application" hidden>
+            <nav class="main-nav" aria-label="Разделы журнала">
+                <button type="button" data-page="reports" class="nav-button active">
+                    Отчётность
+                </button>
+                <button type="button" data-page="editor" class="nav-button" id="new-tab">
+                    ＋ Новая авария
+                </button>
+                <button type="button" data-page="users" class="nav-button" id="users-tab">
+                    Пользователи
+                </button>
+                <button type="button" data-page="audit" class="nav-button" id="audit-tab">
+                    История действий
+                </button>
+            </nav>
+            <main class="workspace">
+                <div id="notice" class="message" role="status" hidden>
+                </div>
+                <section id="reports-page" class="page">
+                    <div class="page-heading">
+                        <div>
+                            <p class="eyebrow">
+                                ОПЕРАТИВНЫЙ ЖУРНАЛ
+                            </p>
+                            <h1>
+                                Отчётность по авариям
+                            </h1>
+                            <p class="muted">
+                                События, пересекающие выбранный период. Дата и время — UTC.
+                            </p>
+                        </div>
+                        <button id="new-accident" type="button" class="button button-primary">
+                            ＋ Зарегистрировать аварию
+                        </button>
+                    </div>
+                    <div class="statistics" aria-label="Сводка за период">
+                        <article>
+                            <span>
+                                Всего событий
+                            </span>
+                            <strong id="stat-total">
+                                —
+                            </strong>
+                        </article>
+                        <article>
+                            <span>
+                                Ещё не завершены
+                            </span>
+                            <strong id="stat-open" class="orange">
+                                —
+                            </strong>
+                        </article>
+                        <article>
+                            <span>
+                                Завершены
+                            </span>
+                            <strong id="stat-closed">
+                                —
+                            </strong>
+                        </article>
+                        <article>
+                            <span>
+                                Первая категория
+                            </span>
+                            <strong id="stat-category">
+                                —
+                            </strong>
+                        </article>
+                    </div>
+                    <form id="filter-form" class="filters panel">
+                        <div class="filter-grid">
+                            <div>
+                                <label for="filter-from">
+                                    Начало периода UTC
+                                </label>
+                                <input id="filter-from" type="datetime-local" required>
+                            </div>
+                            <div>
+                                <label for="filter-to">
+                                    Конец периода UTC, не включается
+                                </label>
+                                <input id="filter-to" type="datetime-local" required>
+                            </div>
+                            <div>
+                                <label for="filter-direction">
+                                    Направление
+                                </label>
+                                <select id="filter-direction">
+                                </select>
+                            </div>
+                            <div>
+                                <label for="filter-center">
+                                    Технический центр
+                                </label>
+                                <select id="filter-center">
+                                </select>
+                            </div>
+                            <div>
+                                <label for="filter-category">
+                                    Категория
+                                </label>
+                                <select id="filter-category">
+                                    <option value="">
+                                        Все категории
+                                    </option>
+                                    <option>
+                                        1
+                                    </option>
+                                    <option>
+                                        2
+                                    </option>
+                                    <option>
+                                        3
+                                    </option>
+                                </select>
+                            </div>
+                            <div>
+                                <label for="filter-network">
+                                    Тип сети
+                                </label>
+                                <select id="filter-network">
+                                </select>
+                            </div>
+                            <div>
+                                <label for="filter-status">
+                                    Состояние
+                                </label>
+                                <select id="filter-status">
+                                    <option value="all">
+                                        Все события
+                                    </option>
+                                    <option value="open">
+                                        НВ — продолжаются
+                                    </option>
+                                    <option value="closed">
+                                        Завершены
+                                    </option>
+                                </select>
+                            </div>
+                            <div>
+                                <label for="filter-search">
+                                    Поиск по номеру, адресу, описанию
+                                </label>
+                                <input id="filter-search" type="search" maxlength="100" placeholder="Адрес БС или PW/NTT">
+                            </div>
+                        </div>
+                        <div class="filter-actions">
+                            <button type="submit" class="button button-dark">
+                                Показать события
+                            </button>
+                            <button type="button" id="reset-filters" class="button button-quiet">
+                                Сбросить
+                            </button>
+                            <span class="small muted">
+                                Фильтры применяются к таблице, сводке и CSV.
+                            </span>
+                        </div>
+                    </form>
+                    <section class="panel table-panel" aria-labelledby="journal-heading">
+                        <div class="table-heading">
+                            <div>
+                                <h2 id="journal-heading">
+                                    Журнал событий
+                                    <span id="table-count" class="count-label">
+                                    </span>
+                                </h2>
+                                <p id="report-state" class="small muted" role="status">
+                                </p>
+                            </div>
+                            <button id="export" type="button" class="button button-outline">
+                                ↓ Скачать CSV
+                            </button>
+                        </div>
+                        <div class="table-scroll">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>
+                                            № / категория
+                                        </th>
+                                        <th>
+                                            Направление / ТЦ
+                                        </th>
+                                        <th>
+                                            Сетевой элемент
+                                        </th>
+                                        <th>
+                                            Тип / сеть
+                                        </th>
+                                        <th>
+                                            Начало UTC
+                                        </th>
+                                        <th>
+                                            Состояние
+                                        </th>
+                                        <th>
+                                            Длительность
+                                        </th>
+                                        <th>
+                                            <span class="sr-only">
+                                                Действия
+                                            </span>
+                                        </th>
+                                    </tr>
+                                </thead>
+                                <tbody id="accident-rows">
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="pagination">
+                            <button type="button" id="previous-page" class="button button-quiet">
+                                ← Назад
+                            </button>
+                            <span id="page-label" class="small muted">
+                            </span>
+                            <button type="button" id="next-page" class="button button-quiet">
+                                Далее →
+                            </button>
+                        </div>
+                    </section>
+                </section>
+                <section id="editor-page" class="page" hidden>
+                    <div class="page-heading">
+                        <div>
+                            <p class="eyebrow" id="editor-eyebrow">
+                                АВАРИИ / НОВАЯ ЗАПИСЬ
+                            </p>
+                            <h1 id="editor-title">
+                                Регистрация аварии
+                            </h1>
+                            <p class="muted">
+                                Укажите время UTC. Пустое окончание означает НВ — настоящее время.
+                            </p>
+                        </div>
+                        <button type="button" id="cancel-edit" class="button button-outline">
+                            ← В журнал
+                        </button>
+                    </div>
+                    <form id="accident-form">
+                        <div id="editor-errors" class="message message-error" role="alert" hidden>
+                        </div>
+                        <section class="panel">
+                            <h2>
+                                <span class="step">
+                                    01
+                                </span>
+                                Где и что произошло
+                            </h2>
+                            <div class="form-grid">
+                                <div class="wide">
+                                    <label for="pw">
+                                        1. PW/NTT — ссылка в CRM
+                                    </label>
+                                    <input id="pw" name="pw" type="url" maxlength="450" placeholder="https://crm.example/incident/123">
+                                </div>
+                                <div>
+                                    <label for="direction">
+                                        2. Направление
+                                    </label>
+                                    <select id="direction" name="direction" required>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label for="center">
+                                        3. Технический центр
+                                    </label>
+                                    <select id="center" name="center" required>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label for="category">
+                                        4. Категория
+                                    </label>
+                                    <select id="category" name="category">
+                                        <option>
+                                            1
+                                        </option>
+                                        <option>
+                                            2
+                                        </option>
+                                        <option>
+                                            3
+                                        </option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label for="networkType">
+                                        5. Тип сети
+                                    </label>
+                                    <select id="networkType" name="networkType" required>
+                                    </select>
+                                </div>
+                                <div class="wide">
+                                    <label for="serviceElement">
+                                        6. Сетевой элемент, услуга
+                                    </label>
+                                    <textarea id="serviceElement" name="serviceElement" maxlength="450" required placeholder="Адрес или список базовых станций">
+                                    </textarea>
+                                </div>
+                                <div>
+                                    <label for="stationCount">
+                                        7. Количество БС
+                                    </label>
+                                    <input id="stationCount" name="stationCount" type="number" min="1" max="10000" value="1" required>
+                                    <label class="checkbox-label">
+                                        <input id="isSector" name="isSector" type="checkbox">
+                                        С — отдельный сектор
+                                    </label>
+                                </div>
+                                <div>
+                                    <label for="equipment">
+                                        8. Тип оборудования
+                                    </label>
+                                    <input id="equipment" name="equipment" maxlength="450">
+                                </div>
+                                <div>
+                                    <label for="alarmType">
+                                        9. Тип аварии
+                                    </label>
+                                    <select id="alarmType" name="alarmType" required>
+                                    </select>
+                                </div>
+                                <div class="wide">
+                                    <label for="description">
+                                        10. Краткое описание
+                                    </label>
+                                    <textarea id="description" name="description" maxlength="450" required>
+                                    </textarea>
+                                </div>
+                            </div>
+                        </section>
+                        <section class="panel">
+                            <h2>
+                                <span class="step">
+                                    02
+                                </span>
+                                Время и восстановление
+                            </h2>
+                            <div class="form-grid">
+                                <div>
+                                    <label for="beginTime">
+                                        11. Начало UTC
+                                    </label>
+                                    <input id="beginTime" name="beginTime" type="datetime-local" step="1" required>
+                                </div>
+                                <div>
+                                    <label for="endTime">
+                                        12. Окончание UTC / пусто = НВ
+                                    </label>
+                                    <input id="endTime" name="endTime" type="datetime-local" step="1">
+                                </div>
+                                <div>
+                                    <label for="batterySeconds">
+                                        13. Работа от АКБ
+                                    </label>
+                                    <input id="batterySeconds" name="batterySeconds" value="00:00:00" placeholder="ЧЧ:ММ:СС" required>
+                                </div>
+                                <div>
+                                    <label for="generatorSeconds">
+                                        14. Работа от генератора
+                                    </label>
+                                    <input id="generatorSeconds" name="generatorSeconds" value="00:00:00" placeholder="ЧЧ:ММ:СС" required>
+                                </div>
+                                <div class="calculated">
+                                    <span>
+                                        15. Длительность аварии
+                                    </span>
+                                    <strong id="calculated-duration">
+                                        00:00:00
+                                    </strong>
+                                    <small>
+                                        Окончание − начало. Для НВ — текущее серверное время − начало.
+                                    </small>
+                                </div>
+                                <div>
+                                    <label for="downtimeSeconds">
+                                        16. Перерыв связи одной БС
+                                    </label>
+                                    <input id="downtimeSeconds" name="downtimeSeconds" value="00:00:00" placeholder="ЧЧ:ММ:СС" required>
+                                </div>
+                                <div class="calculated">
+                                    <span>
+                                        17. Общий простой БС
+                                    </span>
+                                    <strong id="calculated-total">
+                                        00:00:00
+                                    </strong>
+                                    <small>
+                                        Перерыв × количество БС. Для отдельного сектора не определён.
+                                    </small>
+                                </div>
+                            </div>
+                        </section>
+                        <section class="panel">
+                            <h2>
+                                <span class="step">
+                                    03
+                                </span>
+                                Действия дежурного
+                            </h2>
+                            <div class="form-grid">
+                                <div class="wide">
+                                    <label for="notified">
+                                        18. Кому сообщили об аварии
+                                    </label>
+                                    <textarea id="notified" name="notified" maxlength="450">
+                                    </textarea>
+                                </div>
+                                <div class="wide">
+                                    <label for="notes">
+                                        19. Подробное описание / примечания
+                                    </label>
+                                    <textarea id="notes" name="notes" maxlength="450">
+                                    </textarea>
+                                </div>
+                            </div>
+                        </section>
+                        <div class="form-actions">
+                            <span class="small muted">
+                                Сохранение проверяет C# API. Изменения не отправляются до нажатия кнопки.
+                            </span>
+                            <button type="submit" class="button button-primary">
+                                Сохранить аварию →
+                            </button>
+                        </div>
+                    </form>
+                </section>
+                <section id="users-page" class="page" hidden>
+                    <p class="eyebrow">
+                        АДМИНИСТРИРОВАНИЕ
+                    </p>
+                    <h1>
+                        Пользователи и права
+                    </h1>
+                    <p class="muted">
+                        Дежурный создаёт и редактирует аварии. Инженер смотрит и экспортирует. Администратор управляет доступом.
+                    </p>
+                    <div class="admin-columns">
+                        <section class="panel table-panel">
+                            <div class="table-heading">
+                                <h2>
+                                    Учётные записи
+                                </h2>
+                                <button id="refresh-users" type="button" class="button button-quiet">
+                                    Обновить
+                                </button>
+                            </div>
+                            <div class="table-scroll">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>
+                                                Логин
+                                            </th>
+                                            <th>
+                                                Роль
+                                            </th>
+                                            <th>
+                                                Активен
+                                            </th>
+                                            <th>
+                                            </th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="user-rows">
+                                    </tbody>
+                                </table>
+                            </div>
+                        </section>
+                        <form id="user-form" class="panel">
+                            <h2>
+                                Новый пользователь
+                            </h2>
+                            <div id="user-errors" role="alert" class="message message-error" hidden>
+                            </div>
+                            <label for="new-username">
+                                Логин
+                            </label>
+                            <input id="new-username" autocomplete="off" maxlength="40" minlength="3" pattern="[A-Za-z0-9_]{3,40}" required>
+                            <label for="new-password">
+                                Начальный пароль
+                            </label>
+                            <input id="new-password" type="password" autocomplete="new-password" minlength="8" maxlength="72" required>
+                            <label for="new-role">
+                                Роль
+                            </label>
+                            <select id="new-role">
+                                <option value="engineer">
+                                    Инженер
+                                </option>
+                                <option value="duty">
+                                    Дежурный
+                                </option>
+                                <option value="admin">
+                                    Администратор
+                                </option>
+                            </select>
+                            <button type="submit" class="button button-primary full-width">
+                                Создать пользователя
+                            </button>
+                        </form>
+                    </div>
+                </section>
+                <section id="audit-page" class="page" hidden>
+                    <div class="page-heading">
+                        <div>
+                            <p class="eyebrow">
+                                ПРОЗРАЧНОСТЬ ИЗМЕНЕНИЙ
+                            </p>
+                            <h1>
+                                История действий
+                            </h1>
+                            <p class="muted">
+                                Кто создал, изменил или удалил запись. Дата и время — UTC.
+                            </p>
+                        </div>
+                        <button id="refresh-audit" type="button" class="button button-outline">
+                            Обновить
+                        </button>
+                    </div>
+                    <section class="panel table-panel">
+                        <div class="table-scroll">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>
+                                            Время UTC
+                                        </th>
+                                        <th>
+                                            Пользователь
+                                        </th>
+                                        <th>
+                                            Авария
+                                        </th>
+                                        <th>
+                                            Действие
+                                        </th>
+                                    </tr>
+                                </thead>
+                                <tbody id="audit-rows">
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="pagination">
+                            <button type="button" id="previous-audit" class="button button-quiet">
+                                ← Назад
+                            </button>
+                            <span id="audit-label" class="small muted">
+                            </span>
+                            <button type="button" id="next-audit" class="button button-quiet">
+                                Далее →
+                            </button>
+                        </div>
+                    </section>
+                </section>
+            </main>
+        </div>
+        <div id="detail-overlay" class="modal-overlay" hidden>
+            <section class="modal" role="dialog" aria-modal="true" aria-labelledby="detail-title" tabindex="-1">
+                <div class="modal-heading">
+                    <div>
+                        <p class="eyebrow">
+                            КАРТОЧКА СОБЫТИЯ
+                        </p>
+                        <h2 id="detail-title">
+                        </h2>
+                    </div>
+                    <button id="close-details" type="button" class="button button-quiet" aria-label="Закрыть карточку">
+                        ✕
+                    </button>
+                </div>
+                <dl id="detail-fields" class="details">
+                </dl>
+                <div id="detail-actions" class="form-actions">
+                </div>
+            </section>
+        </div>
+        <footer>
+            МОТИВ / Журнал работы сети
+            <span>
+                Все даты и время — UTC · HTML + CSS + JavaScript + C# REST API
+            </span>
+        </footer>
+    </body>
+</html>

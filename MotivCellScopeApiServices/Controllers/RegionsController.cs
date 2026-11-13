@@ -1,48 +1,14 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using MotivCellScopeApiServices.Models;
-using System.Collections.ObjectModel;
 
-// For more information on enabling Web API for empty projects, visit https://go.microsoft.com/fwlink/?LinkID=397860
-
-namespace MotivCellScopeApiServices.Controllers
+namespace MotivCellScopeApiServices.Controllers;
+[ApiController, Authorize, Route("api/regions")]
+public class RegionsController : ControllerBase
 {
-    [Route("api/[controller]")]
-    [ApiController]
-    [Authorize]
-    public class RegionsController : ControllerBase
-    {
-        // 1. Объявляем приватное поле
-        private readonly MotivReportDbContext _db;
-
-        // 2. Внедряем контекст через конструктор (ASP.NET Core сам его создаст и закроет)
-        public RegionsController(MotivReportDbContext db)
-        {
-            _db = db;
-        }
-
-        
-        [HttpGet]
-        public IEnumerable<Region> GetRegions()
-        {
-            // 3. Просто используем поле. Никаких using и new!
-            return _db.Regions.ToList();
-        }
-
-        // GET api/<ValuesController>/5
-        [HttpGet("{id}")]
-        public string Get(int id)
-        {
-            return "value";
-        }
-
-        // POST api/<ValuesController>
-        [HttpPost]
-        public void Post([FromBody] string value)
-        {
-        }
-
-        
-    }
+    private readonly MotivReportDbContext db;
+    public RegionsController(MotivReportDbContext db) => this.db = db;
+    [HttpGet]
+    public async Task<IActionResult> List(CancellationToken ct) => Ok(await db.Regions.AsNoTracking().OrderBy(r => r.RegionId).Select(r => new { r.RegionId, r.Code, r.Name, r.TzOffsetMin }).ToListAsync(ct));
 }

@@ -2,13 +2,7 @@
   "profiles": {
     "Docker Compose": {
       "commandName": "DockerCompose",
-      "commandVersion": "1.0",
-      "environmentVariables": {
-        "DB_ROOT_PASSWORD": "LWXxukZhrn65wy7",
-        "DB_NAME": "motiv_report",
-        "DB_USER": "admin",
-        "DB_PASSWORD": "LWXxukZhrn65wy7"
-      }
+      "commandVersion": "1.0"
     }
   }
 }

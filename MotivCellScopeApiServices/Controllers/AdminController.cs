@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using MotivCellScopeApiServices.Models;
@@ -10,7 +10,7 @@ namespace MotivCellScopeApiServices.Controllers
 {
     [ApiController]
     [Route("api/[controller]")] // Задает базовый путь /api/admin
-    [Authorize] // Auth: да (требует JWT-токен)
+    [Authorize(Roles = "admin")] // Пересчёты разрешены только администратору.
     public class AdminController : ControllerBase
     {
         private readonly MotivReportDbContext _db;

@@ -1,86 +1,80 @@
-﻿using Microsoft.AspNetCore.Identity.Data;
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.IdentityModel.Tokens;
-using MotivCellScopeApiServices.Models;
+using System.ComponentModel.DataAnnotations;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using MotivCellScopeApiServices.Contracts;
+using MotivCellScopeApiServices.Data;
+using MotivCellScopeApiServices.Models;
 
-// For more information on enabling Web API for empty projects, visit https://go.microsoft.com/fwlink/?LinkID=397860
-
-namespace MotivCellScopeApiServices.Controllers
+namespace MotivCellScopeApiServices.Controllers;
+[ApiController, Route("api/auth")]
+public class AuthController : ControllerBase
 {
-    [Route("api/[controller]")]
-    [ApiController]
-    public class AuthController : ControllerBase
+    private readonly IConfiguration config;
+    private readonly MotivReportDbContext legacyDb;
+    private readonly AccidentStore store;
+    public AuthController(IConfiguration config, MotivReportDbContext legacyDb, AccidentStore store)
     {
-
-        private readonly IConfiguration _config;
-        private readonly MotivReportDbContext _db;
-
-        public AuthController(IConfiguration config,MotivReportDbContext db)
-        {
-            _config = config;
-            _db = db;
-        }
-
-        // POST /api/auth/login
-        [HttpPost("login")]
-        public IActionResult Login([FromBody] LoginRequest request)
-        {
-            // 1. Ищем пользователя в базе данных по логину
-            // Примечание: проверьте точные имена свойств в вашем классе User.cs (например, Login или Username)
-            var user = _db.Users
-                .FirstOrDefault(u => u.Username == request.Username);
-
-            // 2. Если пользователь не найден или пароль не совпадает — отказываем в доступе
-            // Проверяем, подходит ли введенный пароль под хеш из базы
-            if (user == null || !BCrypt.Net.BCrypt.Verify(request.Password, user.PasswordHash))
-            {
-                return Unauthorized(new { message = "Неверный логин или пароль" });
-            }
-
-            // 3. Генерируем токен для найденного пользователя
-            var expiresAt = DateTime.UtcNow.AddHours(2);
-            var token = GenerateJwtToken(user.Username, expiresAt);
-
-            return Ok(new
-            {
-                token = token,
-                expiresAt = expiresAt.ToString("yyyy-MM-ddTHH:mm:ssZ"),
-                username = user.Username
-            });
-        }
-
-        private string GenerateJwtToken(string username, DateTime expires)
-        {
-            var jwtKey = _config["Jwt:Key"] ?? throw new InvalidOperationException("JWT Key не настроен");
-            var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
-            var credentials = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256);
-
-            var claims = new[]
-            {
-                new Claim(JwtRegisteredClaimNames.Sub, username),
-                new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
-            };
-
-            var token = new JwtSecurityToken(
-                issuer: _config["Jwt:Issuer"],
-                audience: _config["Jwt:Audience"],
-                claims: claims,
-                expires: expires,
-                signingCredentials: credentials);
-
-            return new JwtSecurityTokenHandler().WriteToken(token);
-        }
-
+        this.config = config;
+        this.legacyDb = legacyDb;
+        this.store = store;
     }
 
-    // Модель входящего запроса
-    public class LoginRequest
+    [HttpPost("login"), EnableRateLimiting("login")]
+    public async Task<IActionResult> Login(LoginRequest request, CancellationToken ct)
     {
-        public string Username { get; set; } = string.Empty;
-        public string Password { get; set; } = string.Empty;
+        if (Encoding.UTF8.GetByteCount(request.Password) > 72)
+            return Unauthorized(new ProblemDetails { Title = "Неверный логин или пароль.", Status = 401 });
+        JournalUser? user;
+        string? hash;
+        if (config.GetValue<bool>("AccidentJournal:Enabled"))
+            (user, hash) = await store.LoginUser(request.Username, ct);
+        else
+        {
+            var row = await legacyDb.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Username == request.Username, ct);
+            user = row == null ? null : new((int)row.UserId, row.Username, row.Username == "admin" ? "admin" : "engineer", true, 1);
+            hash = row?.PasswordHash;
+        }
+
+        bool valid = false;
+        try
+        {
+            valid = user != null && user.Active && hash != null && BCrypt.Net.BCrypt.Verify(request.Password, hash);
+        }
+        catch (BCrypt.Net.SaltParseException)
+        {
+        }
+
+        if (!valid)
+            return Unauthorized(new ProblemDetails { Title = "Неверный логин или пароль.", Status = 401 });
+        var expires = DateTimeOffset.UtcNow.AddHours(2);
+        var claims = new[]
+        {
+            new Claim("sub", user!.Username),
+            new Claim("uid", user.UserId.ToString()),
+            new Claim("unique_name", user.Username),
+            new Claim("role", user.Role),
+            new Claim("ver", user.Version.ToString()),
+            new Claim("jti", Guid.NewGuid().ToString())
+        };
+        var token = new JwtSecurityToken(config["Jwt:Issuer"], config["Jwt:Audience"], claims, expires: expires.UtcDateTime, signingCredentials: new SigningCredentials(new SymmetricSecurityKey(Encoding.UTF8.GetBytes(config["Jwt:Key"]!)), SecurityAlgorithms.HmacSha256));
+        return Ok(new { token = new JwtSecurityTokenHandler().WriteToken(token), expiresAt = expires, username = user.Username, role = user.Role, userId = user.UserId });
     }
+
+    [HttpGet("me"), Authorize]
+    public IActionResult Me() => Ok(new { userId = int.TryParse(User.FindFirstValue("uid"), out var id) ? id : 0, username = User.Identity!.Name, role = User.FindFirstValue("role") });
+}
+
+public class LoginRequest
+{
+    [Required, StringLength(64)]
+    public string Username { get; set; } = "";
+
+    [Required, StringLength(100)]
+    public string Password { get; set; } = "";
 }

@@ -1,0 +1,49 @@
+services:
+  case-db:
+    image: mariadb:10.1
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: motiv_case
+      MYSQL_USER: motiv
+      MYSQL_PASSWORD: ${CASE_DB_PASSWORD:?Copy .env.case.example to .env.case}
+      MYSQL_ROOT_PASSWORD: ${CASE_DB_ROOT_PASSWORD:?Set CASE_DB_ROOT_PASSWORD}
+      TZ: UTC
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci", "--sql-mode=STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION"]
+    ports:
+      - "127.0.0.1:${CASE_DB_PORT:-3306}:3306"
+    volumes:
+      - case_data:/var/lib/mysql
+      - ./db/journal.sql:/docker-entrypoint-initdb.d/01-journal.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=$$MYSQL_PASSWORD mysql -u$$MYSQL_USER -D $$MYSQL_DATABASE -e 'SELECT 1 FROM accident_reports LIMIT 1' >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  case-web:
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: MotivCellScopeApiServices/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__MotivReportConnection: "Server=case-db;Database=motiv_case;"
+      db_user: motiv
+      db_password: ${CASE_DB_PASSWORD:?Set CASE_DB_PASSWORD}
+      jwt_key: ${CASE_JWT_KEY:?Set a long random CASE_JWT_KEY}
+      Jwt__Issuer: MotivCase
+      Jwt__Audience: MotivCaseBrowser
+      Database__Version: "10.1"
+      AccidentJournal__Enabled: "true"
+      AccidentJournal__SeedDemo: "true"
+      Features__LegacyKpi: "false"
+      DemoPassword: ${DEMO_PASSWORD:?Set DEMO_PASSWORD}
+      Http__RedirectToHttps: "false"
+      TZ: UTC
+    depends_on:
+      case-db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${CASE_WEB_PORT:-5090}:8080"
+volumes:
+  case_data:
