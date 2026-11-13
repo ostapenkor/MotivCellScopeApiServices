@@ -288,95 +288,39 @@ INSERT INTO vendors (code, name, rat_supported) VALUES
 -- =====================================================================
 
 INSERT INTO users (username, password_hash) VALUES
-  ('admin', '$2a$11$V8p6Sr1cbEpal0mRCxsCvuUu/gYEN07XWnGM6CSC/DSzefArkfYnO');
+  ('admin', '$2a$11$Qw2Ej7rCconPdaaFlINUjOSxDgjjMbERmYVlYq3vmRDLVOuobSyLO');
   
   
   
 -- =====================================================================
---  motiv_report — ТЕСТОВЫЕ ДАННЫЕ (seed)
---  Запускать ПОСЛЕ 01_schema.sql в том же подключении:
---      mariadb -u root < 01_schema.sql
---      mariadb -u root motiv_report < 02_seed.sql
---
---  Что внутри:
---    • справочники: 4 региона, 3 вендора, тарифы (с SCD2-версией)
---    • 20 БС → 60 сот (по 3 сектора), параметры сот (SCD2), соседства,
---      транспортные линии, статусы, аварии, плановые работы, жалобы, алерты
---    • сырьё за последние 72 часа: PM-счётчики, CDR голоса, сессии, SMS
---    • 3 «зашитые» аномалии, чтобы было что ловить:
---        A) SVE-EKB-0007/сектор B  — деградация CSSR + рост обрывов (есть авария)
---        B) KHM-SRG-0003/сектор C  — аномальный всплеск трафика (без аварии!)
---        C) YNA-NUR-0002/сектор A  — пропуски данных за 5 часов (нет счётчиков)
---    • kpi_cell_hourly, посчитанный из PM-счётчиков
---
---  Все метки времени — UTC.
+-- Тестовые данные для текущей схемы: 20 БС, 60 сот, 192 часа, 5 метрик.
+-- Таблицы тарифов, радиопараметров, CDR и истории в этой схеме отсутствуют.
+-- Справочники и пороги уже заполнены выше; повторные вставки не нужны.
+-- Все метки времени UTC. Скрипт предназначен для новой пустой базы.
 -- =====================================================================
-
-
 SET @now_h := CAST(DATE_FORMAT(UTC_TIMESTAMP(), '%Y-%m-%d %H:00:00') AS DATETIME(3));
 
--- ---------------------------------------------------------------------
--- 1. РЕГИОНЫ (у «Мотива» 4 региона, все в одном поясе UTC+5)
--- ---------------------------------------------------------------------
-INSERT INTO regions (code, name, tz_offset_min, valid_from) VALUES
-  ('SVE', 'Свердловская область',              300, '2010-01-01 00:00:00'),
-  ('KGN', 'Курганская область',                300, '2010-01-01 00:00:00'),
-  ('KHM', 'Ханты-Мансийский АО — Югра',        300, '2010-01-01 00:00:00'),
-  ('YNA', 'Ямало-Ненецкий АО',                 300, '2010-01-01 00:00:00');
-
--- ---------------------------------------------------------------------
--- 2. ВЕНДОРЫ (Ericsson исторически, Huawei — антенны/ИБП, Иртея — пилот 2025)
--- ---------------------------------------------------------------------
-INSERT INTO vendors (code, name, rat_supported, valid_from) VALUES
-  ('ERICSSON', 'Ericsson', 'GSM/LTE',  '2010-01-01 00:00:00'),
-  ('HUAWEI',   'Huawei',   'LTE',      '2019-06-01 00:00:00'),
-  ('IRTEYA',   'Иртея',    'LTE/NR',   '2025-03-01 00:00:00');
-
--- ---------------------------------------------------------------------
--- 3. ТАРИФЫ (2 продукта на регион; у одного — вторая версия, SCD2)
--- ---------------------------------------------------------------------
-INSERT INTO tariffs (tariff_id, region_id, name, monthly_fee, included_gb, included_min, included_sms, valid_from, valid_to)
-SELECT t.tariff_id, r.region_id, CONCAT(t.tname, ' ', r.code), t.fee, t.gb, t.mn, t.sms,
-       '2025-01-01 00:00:00', NULL
-FROM regions r
-CROSS JOIN (
-  SELECT 101 AS tariff_id, 'Свой тариф' AS tname, 590.00 AS fee, 30 AS gb, 300 AS mn, 50 AS sms
-  UNION ALL
-  SELECT 102, 'Безлимитище', 990.00, 100, 1000, 100
-) t;
-
--- SCD2-демонстрация: с 01.10.2026 тариф 102 подорожал (закрываем старую версию, открываем новую)
-UPDATE tariffs
-SET valid_to = '2026-10-01 00:00:00'
-WHERE tariff_id = 102 AND region_id = 1 AND valid_to IS NULL;
-
-INSERT INTO tariffs (tariff_id, region_id, name, monthly_fee, included_gb, included_min, included_sms, valid_from)
-SELECT 102, 1, 'Безлимитище SVE v2', 1090.00, 120, 1000, 100, '2026-10-01 00:00:00';
-
--- ---------------------------------------------------------------------
--- 4. БАЗОВЫЕ СТАНЦИИ (20 шт.: 8 Свердловская, 4 Курганская, 4 ХМАО, 4 ЯНАО)
--- ---------------------------------------------------------------------
-INSERT INTO bts (region_id, vendor_id, code, address, lat, lon, site_type, commissioned_at, status, status_since) VALUES
-  (1, 1, 'SVE-EKB-0001', 'Екатеринбург, ул. Малышева, 51',      56.838011, 60.597465, 'macro', '2014-06-01', 'active', NULL),
-  (1, 1, 'SVE-EKB-0002', 'Екатеринбург, ул. Ленина, 24',        56.835500, 60.612800, 'macro', '2014-06-01', 'active', NULL),
-  (1, 1, 'SVE-EKB-0007', 'Екатеринбург, ул. Радищева, 33',      56.830100, 60.605900, 'macro', '2015-04-12', 'active', NULL),
-  (1, 2, 'SVE-EKB-0011', 'Екатеринбург, ул. Щербакова, 4',      56.800300, 60.630400, 'macro', '2019-09-01', 'active', NULL),
-  (1, 2, 'SVE-EKB-0015', 'Екатеринбург, Академгородок, 12',     56.845000, 60.545000, 'macro', '2021-05-20', 'active', NULL),
-  (1, 3, 'SVE-EKB-0101', 'Екатеринбург, ул. Мира, 19',          56.851000, 60.612000, 'macro', '2025-03-15', 'maintenance', NULL),
-  (1, 1, 'SVE-NTZ-0021', 'Нижний Тагил, пр. Мира, 40',          57.910000, 59.980000, 'macro', '2016-07-01', 'active', NULL),
-  (1, 1, 'SVE-NTZ-0022', 'Нижний Тагил, ул. Победы, 8',         57.905000, 59.960000, 'macro', '2016-07-01', 'degraded', NULL),
-  (2, 1, 'KGN-KRG-0001', 'Курган, ул. Гоголя, 55',              55.440000, 65.340000, 'macro', '2015-03-01', 'active', NULL),
-  (2, 1, 'KGN-KRG-0002', 'Курган, пр. Машиностроителей, 15',    55.428000, 65.310000, 'macro', '2015-03-01', 'active', NULL),
-  (2, 2, 'KGN-KRG-0005', 'Курган, ул. Коли Мяготина, 100',      55.435000, 65.290000, 'micro', '2022-08-01', 'active', NULL),
-  (2, 1, 'KGN-SHF-0010', 'Шадринск, ул. Свердлова, 3',          56.088000, 63.635000, 'rural', '2018-11-01', 'active', NULL),
-  (3, 1, 'KHM-SRG-0001', 'Сургут, ул. Энергетиков, 12',         61.254000, 73.396000, 'macro', '2015-05-01', 'active', NULL),
-  (3, 1, 'KHM-SRG-0002', 'Сургут, пр. Ленина, 44',              61.246000, 73.410000, 'macro', '2015-05-01', 'active', NULL),
-  (3, 2, 'KHM-SRG-0003', 'Сургут, ул. Профсоюзов, 61',          61.262000, 73.428000, 'macro', '2020-06-01', 'active', NULL),
-  (3, 1, 'KHM-NVK-0008', 'Нефтеюганск, Аура, Нефтеюганское ш. 1',61.099000, 72.603000, 'macro', '2017-09-01', 'active', NULL),
-  (4, 1, 'YNA-NUR-0001', 'Новый Уренгой, ул. Мира, 5',          66.083000, 76.680000, 'macro', '2016-02-01', 'active', NULL),
-  (4, 1, 'YNA-NUR-0002', 'Новый Уренгой, ул. Индустриальная, 21',66.076000, 76.700000, 'macro', '2016-02-01', 'active', NULL),
-  (4, 2, 'YNA-NOY-0004', 'Ноябрьск, ул. Республики, 30',        63.199000, 75.450000, 'macro', '2019-10-01', 'active', NULL),
-  (4, 1, 'YNA-SLK-0006', 'Салехард, ул. Чубынина, 14',          66.529000, 66.613000, 'rural', '2020-12-01', 'active', NULL);
+INSERT INTO bts (region_id, vendor_id, code, address, lat, lon, site_type, status, status_since) VALUES
+  (1, 1, 'SVE-EKB-0001', 'Екатеринбург, ул. Малышева, 51',      56.838011, 60.597465, 'macro', 'active', NULL),
+  (1, 1, 'SVE-EKB-0002', 'Екатеринбург, ул. Ленина, 24',        56.835500, 60.612800, 'macro', 'active', NULL),
+  (1, 1, 'SVE-EKB-0007', 'Екатеринбург, ул. Радищева, 33',      56.830100, 60.605900, 'macro', 'active', NULL),
+  (1, 2, 'SVE-EKB-0011', 'Екатеринбург, ул. Щербакова, 4',      56.800300, 60.630400, 'macro', 'active', NULL),
+  (1, 2, 'SVE-EKB-0015', 'Екатеринбург, Академгородок, 12',     56.845000, 60.545000, 'macro', 'active', NULL),
+  (1, 3, 'SVE-EKB-0101', 'Екатеринбург, ул. Мира, 19',          56.851000, 60.612000, 'macro', 'maintenance', NULL),
+  (1, 1, 'SVE-NTZ-0021', 'Нижний Тагил, пр. Мира, 40',          57.910000, 59.980000, 'macro', 'active', NULL),
+  (1, 1, 'SVE-NTZ-0022', 'Нижний Тагил, ул. Победы, 8',         57.905000, 59.960000, 'macro', 'degraded', NULL),
+  (2, 1, 'KGN-KRG-0001', 'Курган, ул. Гоголя, 55',              55.440000, 65.340000, 'macro', 'active', NULL),
+  (2, 1, 'KGN-KRG-0002', 'Курган, пр. Машиностроителей, 15',    55.428000, 65.310000, 'macro', 'active', NULL),
+  (2, 2, 'KGN-KRG-0005', 'Курган, ул. Коли Мяготина, 100',      55.435000, 65.290000, 'micro', 'active', NULL),
+  (2, 1, 'KGN-SHF-0010', 'Шадринск, ул. Свердлова, 3',          56.088000, 63.635000, 'rural', 'active', NULL),
+  (3, 1, 'KHM-SRG-0001', 'Сургут, ул. Энергетиков, 12',         61.254000, 73.396000, 'macro', 'active', NULL),
+  (3, 1, 'KHM-SRG-0002', 'Сургут, пр. Ленина, 44',              61.246000, 73.410000, 'macro', 'active', NULL),
+  (3, 2, 'KHM-SRG-0003', 'Сургут, ул. Профсоюзов, 61',          61.262000, 73.428000, 'macro', 'active', NULL),
+  (3, 1, 'KHM-NVK-0008', 'Нефтеюганск, Аура, Нефтеюганское ш. 1',61.099000, 72.603000, 'macro', 'active', NULL),
+  (4, 1, 'YNA-NUR-0001', 'Новый Уренгой, ул. Мира, 5',          66.083000, 76.680000, 'macro', 'active', NULL),
+  (4, 1, 'YNA-NUR-0002', 'Новый Уренгой, ул. Индустриальная, 21',66.076000, 76.700000, 'macro', 'active', NULL),
+  (4, 2, 'YNA-NOY-0004', 'Ноябрьск, ул. Республики, 30',        63.199000, 75.450000, 'macro', 'active', NULL),
+  (4, 1, 'YNA-SLK-0006', 'Салехард, ул. Чубынина, 14',          66.529000, 66.613000, 'rural', 'active', NULL);
 
 -- ---------------------------------------------------------------------
 -- 5. СОТЫ: 3 сектора на каждую БС (60 сот)
@@ -388,231 +332,35 @@ CROSS JOIN (SELECT 0 AS local_cell_id, 'A' AS sector
             UNION ALL SELECT 1, 'B'
             UNION ALL SELECT 2, 'C') s;
 
--- ---------------------------------------------------------------------
--- 6. РАДИОПАРАМЕТРЫ СОТ (SCD2)
--- ---------------------------------------------------------------------
--- 6.1. Базовый слой LTE1800 на всех сотах
-INSERT INTO cell_params (cell_id, band, earfcn, pci, azimuth_deg, tilt_deg, max_power_dbm, antenna_type, valid_from)
-SELECT c.cell_id, 'LTE1800', 1300, 100 + (c.cell_id * 3) % 400, c.local_cell_id * 120,
-       4.0, 43.0, 'Andrew D-210', '2024-01-01 00:00:00'
-FROM cells c;
-
--- 6.2. В Свердловской области на первые два сектора каждой БС — ещё LTE2600
---      (у одной соты может быть несколько открытых версий — по одной на диапазон)
-INSERT INTO cell_params (cell_id, band, earfcn, pci, azimuth_deg, tilt_deg, max_power_dbm, antenna_type, valid_from)
-SELECT c.cell_id, 'LTE2600', 6400, 300 + (c.cell_id * 7) % 300, c.local_cell_id * 120,
-       5.0, 46.0, 'Kathrein 800', '2025-06-01 00:00:00'
-FROM cells c
-JOIN bts b     ON b.bts_id = c.bts_id
-JOIN regions r ON r.region_id = b.region_id
-WHERE r.code = 'SVE' AND c.local_cell_id < 2;
-
--- 6.3. SCD2-демонстрация: на одной соте изменили азимут (оптимизация)
-UPDATE cell_params p
-JOIN cells c ON c.cell_id = p.cell_id
-JOIN bts b   ON b.bts_id = c.bts_id
-SET p.valid_to = '2026-09-15 00:00:00'
-WHERE b.code = 'SVE-EKB-0007' AND c.local_cell_id = 1 AND p.band = 'LTE1800' AND p.valid_to IS NULL;
-
-INSERT INTO cell_params (cell_id, band, earfcn, pci, azimuth_deg, tilt_deg, max_power_dbm, antenna_type, valid_from)
-SELECT c.cell_id, 'LTE1800', 1300, 100 + (c.cell_id * 3) % 400, 135, 6.0, 41.0, 'Andrew D-210', '2026-09-15 00:00:00'
-FROM cells c JOIN bts b ON b.bts_id = c.bts_id
-WHERE b.code = 'SVE-EKB-0007' AND c.local_cell_id = 1;
-
--- ---------------------------------------------------------------------
--- 7. СОСЕДСТВА (внутри площадки: каждый сектор со всеми остальными) = 120 строк
--- ---------------------------------------------------------------------
-INSERT INTO neighbors (cell_id, neighbor_cell_id, ho_type, is_blacklisted, valid_from)
-SELECT a.cell_id, b.cell_id, 'intra_freq', 0, '2024-01-01 00:00:00'
-FROM cells a
-JOIN cells b ON b.bts_id = a.bts_id AND b.cell_id <> a.cell_id;
-
--- ---------------------------------------------------------------------
--- 8. ТРАНСПОРТ: по одной линии на БС + пара проблемных
--- ---------------------------------------------------------------------
-INSERT INTO transport_links (code, region_id, link_type, capacity_mbps, a_bts_id, b_bts_id, status, status_since)
-SELECT CONCAT('LNK-', b.code), b.region_id,
-       CASE WHEN b.site_type = 'rural' THEN 'radio_relay' ELSE 'fiber' END,
-       CASE WHEN b.site_type = 'rural' THEN 200 ELSE 1000 END,
-       b.bts_id, NULL, 'active', '2025-01-01 00:00:00'
-FROM bts b;
-
--- деградация линии у проблемной БС
-UPDATE transport_links l
-JOIN bts b ON b.bts_id = l.a_bts_id
-SET l.status = 'degraded', l.status_since = TIMESTAMPADD(HOUR, -30, @now_h)
-WHERE b.code = 'SVE-NTZ-0022';
-
-INSERT INTO transport_status_history (link_id, status, changed_at, reason)
-SELECT l.link_id, 'degraded', TIMESTAMPADD(HOUR, -30, @now_h), 'рост BER на РРЛ, дождь'
-FROM transport_links l WHERE l.code = 'LNK-SVE-NTZ-0022';
-
-INSERT INTO transport_status_history (link_id, status, changed_at, reason)
-SELECT l.link_id, 'down', TIMESTAMPADD(HOUR, -6, @now_h), 'обрыв ВОЛС, земляные работы'
-FROM transport_links l WHERE l.code = 'LNK-KGN-KRG-0002'
-LIMIT 1;
-
-UPDATE transport_links l SET l.status = 'down', l.status_since = TIMESTAMPADD(HOUR, -6, @now_h)
-WHERE l.code = 'LNK-KGN-KRG-0002';
-
--- ---------------------------------------------------------------------
--- 9. ИСТОРИЯ СТАТУСОВ БС
--- ---------------------------------------------------------------------
-INSERT INTO bts_status_history (bts_id, status, changed_at, reason, comment)
-SELECT b.bts_id, 'maintenance', TIMESTAMPADD(HOUR, -20, @now_h), 'planned_work', 'монтаж Иртея, сектор B'
-FROM bts b WHERE b.code = 'SVE-EKB-0101';
-
-INSERT INTO bts_status_history (bts_id, status, changed_at, reason, comment)
-SELECT b.bts_id, 'degraded', TIMESTAMPADD(HOUR, -30, @now_h), 'link_down', 'деградация РРЛ'
-FROM bts b WHERE b.code = 'SVE-NTZ-0022';
-
-INSERT INTO bts_status_history (bts_id, status, changed_at, reason, comment)
-SELECT b.bts_id, 'down', TIMESTAMPADD(HOUR, -8, @now_h), 'power_off', 'отключение фидера'
-FROM bts b WHERE b.code = 'KGN-KRG-0002';
-
-INSERT INTO bts_status_history (bts_id, status, changed_at, reason, comment)
-SELECT b.bts_id, 'active', TIMESTAMPADD(HOUR, -2, @now_h), 'other', 'питание восстановлено'
-FROM bts b WHERE b.code = 'KGN-KRG-0002';
-
 UPDATE bts b SET b.status = 'maintenance', b.status_since = TIMESTAMPADD(HOUR, -20, @now_h) WHERE b.code = 'SVE-EKB-0101';
 UPDATE bts b SET b.status = 'active',      b.status_since = TIMESTAMPADD(HOUR, -2,  @now_h) WHERE b.code = 'KGN-KRG-0002';
 UPDATE bts b SET b.status = 'degraded',    b.status_since = TIMESTAMPADD(HOUR, -30, @now_h) WHERE b.code = 'SVE-NTZ-0022';
 
--- ---------------------------------------------------------------------
--- 10. ИНЦИДЕНТЫ, ПЛАНОВЫЕ РАБОТЫ
--- ---------------------------------------------------------------------
--- Инцидент, который ОБЪЯСНЯЕТ аномалию A (деградация на SVE-EKB-0007)
-INSERT INTO incidents (region_id, bts_id, link_id, category, severity, started_at, resolved_at, description)
-SELECT b.region_id, b.bts_id, NULL, 'transport', 'high',
+INSERT INTO incidents (region_id, bts_id, category, severity, started_at, resolved_at, description)
+SELECT b.region_id, b.bts_id, 'transport', 'high',
        TIMESTAMPADD(HOUR, -26, @now_h), NULL,
        'Деградация транспортного канала: рост потерь пакетов, следствие — падение CSSR'
 FROM bts b WHERE b.code = 'SVE-EKB-0007';
 
-INSERT INTO incidents (region_id, bts_id, link_id, category, severity, started_at, resolved_at, description)
-SELECT b.region_id, b.bts_id, NULL, 'power', 'critical',
+INSERT INTO incidents (region_id, bts_id, category, severity, started_at, resolved_at, description)
+SELECT b.region_id, b.bts_id, 'power', 'critical',
        TIMESTAMPADD(HOUR, -8, @now_h), TIMESTAMPADD(HOUR, -2, @now_h),
        'Отключение электроэнергии, БС на ДГУ, часть секторов недоступна'
 FROM bts b WHERE b.code = 'KGN-KRG-0002';
 
-INSERT INTO incidents (region_id, bts_id, link_id, category, severity, started_at, resolved_at, description)
-SELECT b.region_id, b.bts_id, NULL, 'hardware', 'medium',
+INSERT INTO incidents (region_id, bts_id, category, severity, started_at, resolved_at, description)
+SELECT b.region_id, b.bts_id, 'hardware', 'medium',
        TIMESTAMPADD(HOUR, -30, @now_h), NULL,
        'Деградация РРЛ, снижение ёмкости до 40%'
 FROM bts b WHERE b.code = 'SVE-NTZ-0022';
 
-INSERT INTO work_plans (region_id, bts_id, work_type, planned_from, planned_to, impact_expected, description)
-SELECT b.region_id, b.bts_id, 'modernization',
-       TIMESTAMPADD(HOUR, -22, @now_h), TIMESTAMPADD(HOUR, -18, @now_h), 1,
-       'Замена части секторов на отечественные БС «Иртея»'
-FROM bts b WHERE b.code = 'SVE-EKB-0101';
-
-INSERT INTO work_plans (region_id, bts_id, work_type, planned_from, planned_to, impact_expected, description)
-SELECT b.region_id, b.bts_id, 'optimization',
-       TIMESTAMPADD(HOUR, 24, @now_h), TIMESTAMPADD(HOUR, 30, @now_h), 1,
-       'Оптимизация наклонов антенн, возможны кратковременные ухудшения'
-FROM bts b WHERE b.code = 'KHM-SRG-0001';
-
--- ---------------------------------------------------------------------
--- 11. АЛЕРТЫ OSS/NMS
--- ---------------------------------------------------------------------
-INSERT INTO alarms (bts_id, link_id, vendor_id, alarm_code, severity, raised_at, cleared_at, description)
-SELECT b.bts_id, NULL, b.vendor_id, 'LOSS_OF_SIGNAL', 'critical',
-       TIMESTAMPADD(HOUR, -8, @now_h), TIMESTAMPADD(HOUR, -2, @now_h), 'Потеря сигнала на секторе B'
-FROM bts b WHERE b.code = 'KGN-KRG-0002';
-
-INSERT INTO alarms (bts_id, link_id, vendor_id, alarm_code, severity, raised_at, cleared_at, description)
-SELECT b.bts_id, NULL, b.vendor_id, 'HIGH_PACKET_LOSS', 'major',
-       TIMESTAMPADD(HOUR, -26, @now_h), NULL, 'Потери пакетов на транспортном интерфейсе'
-FROM bts b WHERE b.code = 'SVE-EKB-0007';
-
-INSERT INTO alarms (bts_id, link_id, vendor_id, alarm_code, severity, raised_at, cleared_at, description)
-SELECT b.bts_id, NULL, b.vendor_id, 'CELL_UNLOCKED', 'info',
-       TIMESTAMPADD(HOUR, -20, @now_h), NULL, 'Сектор выведен в сервис после работ'
-FROM bts b WHERE b.code = 'SVE-EKB-0101';
-
-INSERT INTO alarms (bts_id, link_id, vendor_id, alarm_code, severity, raised_at, cleared_at, description)
-SELECT NULL, l.link_id, 1, 'LINK_DEGRADED', 'major',
-       TIMESTAMPADD(HOUR, -30, @now_h), NULL, 'Снижение ёмкости РРЛ'
-FROM transport_links l WHERE l.code = 'LNK-SVE-NTZ-0022';
-
--- ---------------------------------------------------------------------
--- 12. ЖАЛОБЫ АБОНЕНТОВ
--- ---------------------------------------------------------------------
-INSERT INTO complaints (region_id, cell_id, created_at, category, lat, lon, description)
-SELECT b.region_id, c.cell_id, TIMESTAMPADD(HOUR, -25 + (n.i % 10), @now_h),
-       CASE n.i % 5 WHEN 0 THEN 'voice_quality' WHEN 1 THEN 'no_coverage'
-                    WHEN 2 THEN 'data_slow'     WHEN 3 THEN 'no_service'
-                    ELSE 'other' END,
-       b.lat, b.lon, CONCAT('Обращение #', n.i, ': качество связи')
-FROM bts b
-JOIN cells c ON c.bts_id = b.bts_id AND c.local_cell_id = 1
-JOIN (SELECT 1 AS i UNION ALL SELECT 2 UNION ALL SELECT 3 UNION ALL SELECT 4
-      UNION ALL SELECT 5 UNION ALL SELECT 6 UNION ALL SELECT 7 UNION ALL SELECT 8) n
-WHERE b.code IN ('SVE-EKB-0007', 'SVE-NTZ-0022', 'KGN-KRG-0002', 'KHM-SRG-0003');
-
--- ---------------------------------------------------------------------
--- 13. КАТАЛОГ МЕТРИК (канонические, «вендоронезависимые»)
--- ---------------------------------------------------------------------
-INSERT INTO metric_catalog (metric_id, metric_code, metric_name, metric_kind, unit) VALUES
-  (1, 'rrc_conn_attempt',  'Попытки установления соединения (RRC/E-RAB)', 'counter', 'count'),
-  (2, 'rrc_conn_success',  'Успешные установления соединения',            'counter', 'count'),
-  (3, 'conn_drop',         'Аварийные освобождения/обрывы',               'counter', 'count'),
-  (4, 'ho_attempt',        'Попытки хэндовера',                           'counter', 'count'),
-  (5, 'ho_success',        'Успешные хэндоверы',                          'counter', 'count'),
-  (6, 'traffic_dl_bytes',  'Объём трафика вниз (PDCP)',                   'volume',  'byte'),
-  (7, 'traffic_ul_bytes',  'Объём трафика вверх (PDCP)',                  'volume',  'byte'),
-  (8, 'availability_min',  'Доступность соты, минут в час',               'gauge',   'min'),
-  (9, 'max_users',         'Максимальное число активных пользователей',   'gauge',   'count');
-
--- ---------------------------------------------------------------------
--- 14. МАППИНГ СЧЁТЧИКОВ ВЕНДОРОВ → КАНОНИЧЕСКИЕ МЕТРИКИ
--- ---------------------------------------------------------------------
-INSERT INTO counter_mapping (vendor_id, vendor_counter, metric_id, rat) VALUES
-  -- Ericsson
-  (1, 'pmRrcConnEstabAtt',        1, 'LTE'),
-  (1, 'pmRrcConnEstabSucc',       2, 'LTE'),
-  (1, 'pmErabRelAbnormalEnb',     3, 'LTE'),
-  (1, 'pmHoExeAtt',               4, 'LTE'),
-  (1, 'pmHoExeSucc',              5, 'LTE'),
-  (1, 'pmPdcpVolDlDrb',           6, 'LTE'),
-  (1, 'pmPdcpVolUlDrb',           7, 'LTE'),
-  -- Huawei
-  (2, 'RRC.ConnEstab.Att',        1, 'LTE'),
-  (2, 'RRC.ConnEstab.Succ',       2, 'LTE'),
-  (2, 'ERAB.RelAbnormal',         3, 'LTE'),
-  (2, 'HO.IntraRat.Exe.Att',      4, 'LTE'),
-  (2, 'HO.IntraRat.Exe.Succ',     5, 'LTE'),
-  (2, 'PDCP.Volume.DL',           6, 'LTE'),
-  (2, 'PDCP.Volume.UL',           7, 'LTE'),
-  -- Иртея
-  (3, 'irt_rrc_setup_req',        1, 'LTE'),
-  (3, 'irt_rrc_setup_cnf',        2, 'LTE'),
-  (3, 'irt_ctx_drop_abn',         3, 'LTE'),
-  (3, 'irt_ho_att',               4, 'LTE'),
-  (3, 'irt_ho_succ',              5, 'LTE'),
-  (3, 'irt_bytes_dl',             6, 'LTE'),
-  (3, 'irt_bytes_ul',             7, 'LTE');
-
--- ---------------------------------------------------------------------
--- 15. ПОРОГИ KPI (общие + региональное уточнение)
--- ---------------------------------------------------------------------
-INSERT INTO kpi_thresholds (kpi_code, region_id, vendor_id, min_value, max_value, direction, severity) VALUES
-  ('cssr',  NULL, NULL, 97.0000, NULL,   'lower_is_worse',  'critical'),
-  ('dcr',   NULL, NULL, NULL,    2.0000, 'higher_is_worse', 'warning'),
-  ('hosr',  NULL, NULL, 95.0000, NULL,   'lower_is_worse',  'warning'),
-  ('cssr',  1,    NULL, 97.5000, NULL,   'lower_is_worse',  'critical'),   -- Свердловская строже
-  ('dcr',   3,    NULL, NULL,    1.5000, 'higher_is_worse', 'warning');
-
--- =====================================================================
--- 16. СЫРЬЁ: PM-СЧЁТЧИКИ ЗА 8 СУТОК (нужна база для z-score)
--- =====================================================================
 CREATE TEMPORARY TABLE tmp_hours (i INT PRIMARY KEY, ts_hour DATETIME(3), hh TINYINT);
 INSERT INTO tmp_hours (i, ts_hour, hh)
 WITH RECURSIVE seq(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM seq WHERE i < 191)
 SELECT s.i, TIMESTAMPADD(HOUR, -s.i, @now_h), HOUR(TIMESTAMPADD(HOUR, -s.i, @now_h)) FROM seq s;
 
 CREATE TEMPORARY TABLE tmp_metrics (metric_id SMALLINT UNSIGNED PRIMARY KEY);
-INSERT INTO tmp_metrics VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9);
+INSERT INTO tmp_metrics SELECT metric_id FROM metric_catalog;
 
 -- «Проблемные» соты (для зашитых аномалий)
 SET @cell_degr := (SELECT c.cell_id FROM cells c JOIN bts b ON b.bts_id=c.bts_id
@@ -634,12 +382,8 @@ SELECT
       WHEN 1 THEN x.att
       WHEN 2 THEN x.att * x.succ_rate
       WHEN 3 THEN x.att * (1 - x.succ_rate) * 0.25
-      WHEN 4 THEN x.ho_att
-      WHEN 5 THEN x.ho_att * 0.972
-      WHEN 6 THEN x.att * 850000 * x.hour_load * x.traffic_mult
-      WHEN 7 THEN x.att * 850000 * x.hour_load * x.traffic_mult / 9
-      WHEN 8 THEN 60
-      WHEN 9 THEN x.att * 0.35
+      WHEN 4 THEN x.att * 850000 * x.hour_load * x.traffic_mult
+      WHEN 5 THEN x.att * 850000 * x.hour_load * x.traffic_mult / 9
     END AS DECIMAL(20,4)), 4)
 FROM (
   SELECT
@@ -664,8 +408,6 @@ FROM (
       - IF(c.cell_id = @cell_degr AND h.i < 26, 0.075, 0)
       -- АНОМАЛИЯ B: всплеск трафика на @cell_spike (без аварии)
       AS succ_rate,
-    ROUND(GREATEST(8, ROUND((40 + (c.cell_id * 7) % 60)
-             * (0.40 + 0.60 * (0.5 - 0.5 * COS(2 * PI() * (h.hh - 4) / 24))))) * 1.3)  AS ho_att,
     -- АНОМАЛИЯ B: множитель трафика x6 на @cell_spike за последние 12 часов
     IF(c.cell_id = @cell_spike AND h.i < 12, 10.0, 1.0)                                  AS traffic_mult
   FROM cells c
@@ -676,126 +418,8 @@ CROSS JOIN tmp_metrics m
 -- АНОМАЛИЯ C: у @cell_gap нет данных за последние 5 часов (пропуск)
 WHERE NOT (x.cell_id = @cell_gap AND x.i < 5);
 
--- =====================================================================
--- 17. KPI ПО СОТАМ И ЧАСАМ (derived: считается из PM-счётчиков)
--- =====================================================================
-INSERT INTO kpi_cell_hourly
-  (cell_id, ts_hour, vendor_id, conn_attempt, conn_success, conn_drop,
-   ho_attempt, ho_success, traffic_dl_bytes, traffic_ul_bytes,
-   cssr_pct, dcr_pct, hosr_pct)
-SELECT
-  p.cell_id, p.ts_hour, p.vendor_id,
-  SUM(CASE WHEN p.metric_id = 1 THEN p.value ELSE 0 END) AS conn_attempt,
-  SUM(CASE WHEN p.metric_id = 2 THEN p.value ELSE 0 END) AS conn_success,
-  SUM(CASE WHEN p.metric_id = 3 THEN p.value ELSE 0 END) AS conn_drop,
-  SUM(CASE WHEN p.metric_id = 4 THEN p.value ELSE 0 END) AS ho_attempt,
-  SUM(CASE WHEN p.metric_id = 5 THEN p.value ELSE 0 END) AS ho_success,
-  SUM(CASE WHEN p.metric_id = 6 THEN p.value ELSE 0 END) AS traffic_dl_bytes,
-  SUM(CASE WHEN p.metric_id = 7 THEN p.value ELSE 0 END) AS traffic_ul_bytes,
-  100 * SUM(CASE WHEN p.metric_id = 2 THEN p.value ELSE 0 END)
-      / NULLIF(SUM(CASE WHEN p.metric_id = 1 THEN p.value ELSE 0 END), 0),
-  100 * SUM(CASE WHEN p.metric_id = 3 THEN p.value ELSE 0 END)
-      / NULLIF(SUM(CASE WHEN p.metric_id = 2 THEN p.value ELSE 0 END), 0),
-  100 * SUM(CASE WHEN p.metric_id = 5 THEN p.value ELSE 0 END)
-      / NULLIF(SUM(CASE WHEN p.metric_id = 4 THEN p.value ELSE 0 END), 0)
-FROM pm_counters_hourly p
-WHERE p.ts_hour >= TIMESTAMPADD(HOUR, -192, @now_h)
-GROUP BY p.cell_id, p.ts_hour, p.vendor_id;
 
--- =====================================================================
--- 18. CDR ГОЛОСА, СЕССИИ ДАННЫХ, SMS (сырьё за 24 часа)
--- =====================================================================
-CREATE TEMPORARY TABLE tmp_h24 (i INT PRIMARY KEY, ts_hour DATETIME(3), hh TINYINT);
-INSERT INTO tmp_h24 (i, ts_hour, hh)
-WITH RECURSIVE seq(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM seq WHERE i < 23)
-SELECT s.i, TIMESTAMPADD(HOUR, -s.i, @now_h), HOUR(TIMESTAMPADD(HOUR, -s.i, @now_h)) FROM seq s;
-
-CREATE TEMPORARY TABLE tmp_n (n INT PRIMARY KEY);
-INSERT INTO tmp_n VALUES (0),(1),(2),(3);
-
--- 18.1. Голосовые CDR (≈17 тыс. записей)
-INSERT INTO cdr_voice (cell_id, subscriber_id, msisdn_hash, start_ts, duration_sec,
-                       call_type, result, drop_cause, peer_operator)
-SELECT
-  c.cell_id,
-  100000 + (c.cell_id * 37 + h.i * 13 + s.n) % 50000,
-  SHA2(CONCAT('79', c.cell_id, h.i, s.n), 256),
-  TIMESTAMPADD(SECOND, s.n * 900 + (c.cell_id * 7) % 600, h.ts_hour),
-  20 + (c.cell_id * 11 + h.hh * 7 + s.n) % 300,
-  IF((c.cell_id + h.hh + s.n) % 5 = 0, 'mtc', 'moc'),
-  CASE
-    WHEN c.cell_id = @cell_degr AND h.i < 26 AND s.n = 0 THEN 'dropped'
-    WHEN (c.cell_id + h.hh * 3 + s.n) % 13 = 0 THEN 'no_answer'
-    WHEN (c.cell_id + h.hh * 3 + s.n) % 17 = 0 THEN 'busy'
-    ELSE 'answered'
-  END,
-  IF(c.cell_id = @cell_degr AND h.i < 26 AND s.n = 0, 'abnormal_release', NULL),
-  CASE WHEN (c.cell_id + s.n) % 4 = 0 THEN 'MegaFon' ELSE NULL END
-FROM cells c
-CROSS JOIN tmp_h24 h
-CROSS JOIN tmp_n s;
-
--- 18.2. Сессии передачи данных (≈13 тыс. записей).
---       Объёмы калиброваны по kpi_cell_hourly, чтобы сверка источников
---       сходилась; на KGN-KRG-0005 намеренно завышены в 1.9 раза —
---       это АНОМАЛИЯ D (расхождение session_data и PM-счётчиков).
-INSERT INTO session_data (cell_id, subscriber_id, start_ts, end_ts, bytes_ul, bytes_dl,
-                          rat, apn, app_class, term_cause)
-SELECT
-  c.cell_id,
-  200000 + (c.cell_id * 53 + h.i * 17 + s.n) % 80000,
-  TIMESTAMPADD(SECOND, s.n * 1200 + (c.cell_id * 13) % 900, h.ts_hour),
-  TIMESTAMPADD(SECOND, s.n * 1200 + (c.cell_id * 13) % 900 + 300 + (s.n * 97) % 600, h.ts_hour),
-  ROUND(COALESCE(k.traffic_ul_bytes, 3000000) / 3 * (1 + 0.06 * (s.n - 1))
-        * IF(b.code = 'KGN-KRG-0005', 1.9, 1) * (1 + 0.03 * SIN(c.cell_id))),
-  ROUND(COALESCE(k.traffic_dl_bytes, 24000000) / 3 * (1 + 0.06 * (s.n - 1))
-        * IF(b.code = 'KGN-KRG-0005', 1.9, 1) * (1 + 0.03 * SIN(c.cell_id))),
-  CASE WHEN c.cell_id % 9 = 0 THEN 'UMTS' ELSE 'LTE' END,
-  'internet.motiv',
-  ELT(1 + (c.cell_id + s.n) % 4, 'video', 'messenger', 'web', 'p2p'),
-  'normal'
-FROM cells c
-JOIN bts b ON b.bts_id = c.bts_id
-CROSS JOIN tmp_h24 h
-CROSS JOIN (SELECT 0 AS n UNION ALL SELECT 1 UNION ALL SELECT 2) s
-LEFT JOIN kpi_cell_hourly k ON k.cell_id = c.cell_id AND k.ts_hour = h.ts_hour;
-
--- 18.3. SMS (≈6 тыс. записей)
-DROP TEMPORARY TABLE IF EXISTS tmp_h24;
-CREATE TEMPORARY TABLE tmp_h24 (i INT PRIMARY KEY, ts_hour DATETIME(3), hh TINYINT);
-INSERT INTO tmp_h24 (i, ts_hour, hh)
-WITH RECURSIVE seq(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM seq WHERE i < 23)
-SELECT s.i, TIMESTAMPADD(HOUR, -s.i, @now_h), HOUR(TIMESTAMPADD(HOUR, -s.i, @now_h)) FROM seq s;
-
-INSERT INTO cdr_sms (cell_id, subscriber_id, sent_ts, direction, result)
-SELECT
-  c.cell_id,
-  300000 + (c.cell_id * 29 + h.i * 19 + s.n) % 40000,
-  TIMESTAMPADD(SECOND, s.n * 1800 + (c.cell_id * 11) % 1200, h.ts_hour),
-  IF((c.cell_id + s.n) % 3 = 0, 'mt', 'mo'),
-  IF((c.cell_id + h.hh + s.n) % 23 = 0, 'failed', 'delivered')
-FROM cells c
-CROSS JOIN tmp_h24 h
-CROSS JOIN (SELECT 0 AS n UNION ALL SELECT 1) s;
-
--- =====================================================================
--- 18.4. ПРИМЕЧАНИЕ РАЗРАБОТЧИКУ: как воспроизвести/проверить проверки
--- =====================================================================
---  Чтобы увидеть аномалии, выполните после загрузки:
---      CALL sp_refresh_kpi_hourly(TIMESTAMPADD(HOUR,-192,UTC_TIMESTAMP(3)), UTC_TIMESTAMP(3));
---      CALL sp_detect_anomalies(72);
---      SELECT * FROM v_anomalies_open;
---  Ожидаемый результат на этих данных:
---    • threshold   — только SVE-EKB-0007/сектор B (CSSR ~91%), автоматически
---                    объяснён инцидентом по транспорту → status='explained';
---    • zscore      — только KHM-SRG-0003/сектор C (трафик x10, z > 30),
---                    НЕ объяснён → статус 'new', требует внимания;
---    • missing_data— YNA-NUR-0002/сектор A, 5 пропущенных часов;
---    • cross_source— KGN-KRG-0005 (все секторы, 24 часа): сессии завышены в 1.9 раза.
---  Если «аномалия» находится на всём парке — это баг генератора (слишком
---  маленький разброс), а не сигнал.
-
-DROP TEMPORARY TABLE tmp_hours, tmp_metrics, tmp_h24, tmp_n;
+DROP TEMPORARY TABLE tmp_hours, tmp_metrics;
 
 -- =====================================================================
 --  motiv_report — ПРОЦЕДУРЫ (03_checks.sql)
@@ -1098,3 +722,9 @@ BEGIN
 END$$
 DELIMITER ;
 
+
+
+-- Первоначальный расчёт после загрузки сырья и создания процедур.
+CALL sp_refresh_kpi_hourly(TIMESTAMPADD(HOUR, -192, @now_h), TIMESTAMPADD(HOUR, 1, @now_h));
+CALL sp_detect_anomalies(72);
+CALL sp_detect_availability_anomalies(TIMESTAMPADD(HOUR, -192, @now_h), TIMESTAMPADD(HOUR, 1, @now_h));
