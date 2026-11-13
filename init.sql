@@ -288,7 +288,7 @@ INSERT INTO vendors (code, name, rat_supported) VALUES
 -- =====================================================================
 
 INSERT INTO users (username, password_hash) VALUES
-  ('admin', '$2a$11$V8p6Sr1cbEpal0mRCxsCvuUu/gYEN07XWnGM6CSC/DSzefArkfYnO');
+  ('admin', '$2a$11$Qw2Ej7rCconPdaaFlINUjOSxDgjjMbERmYVlYq3vmRDLVOuobSyLO');
   
   
   
