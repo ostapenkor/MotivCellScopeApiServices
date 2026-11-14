@@ -1,0 +1,15 @@
+name: motiv-monitoring-demo
+services:
+  monitoring:
+    image: php:8.4-cli-alpine
+    working_dir: /app
+    command: ["php", "-S", "0.0.0.0:5092", "-t", "/app"]
+    environment:
+      MONITORING_MODE: demo
+    ports:
+      - "127.0.0.1:5092:5092"
+    volumes:
+      - type: bind
+        source: .
+        target: /app
+        read_only: true

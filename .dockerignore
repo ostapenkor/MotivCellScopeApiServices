@@ -32,3 +32,6 @@ README.md
 **/.env.*
 tests
 docs
+
+# Standalone monitoring demo has its own PHP compose
+prototypes
