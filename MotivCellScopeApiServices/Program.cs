@@ -124,7 +124,10 @@ app.MapGet("/api/health", async (CancellationToken ct) =>
     }
 }).AllowAnonymous();
 if (journal)
+{
+    await JournalSchema.Ensure(config);
     await JournalBootstrap.Seed(config);
+}
 app.Run();
 // Профиль кейса не регистрирует KPI-контроллеры, которым нужна другая схема БД.
 public class ControllerProfileConvention : Microsoft.AspNetCore.Mvc.ApplicationModels.IApplicationModelConvention

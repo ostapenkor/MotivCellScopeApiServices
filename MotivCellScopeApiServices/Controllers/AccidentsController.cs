@@ -2,6 +2,7 @@ using System.ComponentModel.DataAnnotations;
 using System.Globalization;
 using System.Security.Claims;
 using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MotivCellScopeApiServices.Contracts;
@@ -16,7 +17,37 @@ public class AccidentsController : ControllerBase
     private int Actor => int.Parse(User.FindFirstValue("uid")!);
 
     [HttpGet("options")]
-    public IActionResult Options() => Ok(new { directions = JournalOptions.Directions, centers = JournalOptions.Centers, networkTypes = JournalOptions.Networks, alarmTypes = JournalOptions.AlarmTypes, serverTimeUtc = DateTimeOffset.UtcNow, permissions = new { canWrite = User.IsInRole("admin") || User.IsInRole("duty"), canDelete = User.IsInRole("admin"), canManageUsers = User.IsInRole("admin") } });
+    public async Task<IActionResult> Options(CancellationToken ct)
+    {
+        var result = await store.Options(ct);
+        result["permissions"] = new
+        {
+            canWrite = User.IsInRole("admin") || User.IsInRole("duty"),
+            canDelete = User.IsInRole("admin"),
+            canManageUsers = User.IsInRole("admin")
+        };
+        return Ok(result);
+    }
+
+    [HttpGet("dashboard")]
+    public async Task<IActionResult> Dashboard([FromQuery] AccidentFilter filter, CancellationToken ct) => Ok(await store.Dashboard(filter, ct));
+    [HttpPost("import"), Authorize(Roles = "admin"), RequestSizeLimit(20971520)]
+    public async Task<IActionResult> Import(ImportBatchInput input, CancellationToken ct)
+    {
+        try
+        {
+            return Ok(await store.Import(input, Actor, ct));
+        }
+        catch (ImportInProgressException e)
+        {
+            return Conflict(new ProblemDetails { Title = e.Message, Status = 409 });
+        }
+        catch (ValidationException e)
+        {
+            return BadRequest(new ProblemDetails { Title = e.Message, Status = 400 });
+        }
+    }
+
     [HttpGet]
     public async Task<IActionResult> List([FromQuery] AccidentFilter filter, CancellationToken ct) => Ok(await store.List(filter, false, ct));
     [HttpGet("{id:int:min(1)}")]
@@ -29,6 +60,9 @@ public class AccidentsController : ControllerBase
     [HttpPost, Authorize(Roles = "admin,duty")]
     public async Task<IActionResult> Create(AccidentInput input, CancellationToken ct)
     {
+        var error = await store.ValidateReferences(input, ct);
+        if (error != null)
+            return BadRequest(new ProblemDetails { Title = error, Status = 400 });
         int id = await store.Save(0, input, Actor, ct);
         return CreatedAtAction(nameof(Get), new { id }, await store.Get(id, ct));
     }
@@ -42,7 +76,12 @@ public class AccidentsController : ControllerBase
             return ValidationProblem(ModelState);
         }
 
+        var error = await store.ValidateReferences(input, ct);
+        if (error != null)
+            return BadRequest(new ProblemDetails { Title = error, Status = 400 });
         int result = await store.Save(id, input, Actor, ct);
+        if (result == -2)
+            return BadRequest(new ProblemDetails { Title = "Основание времени исходной записи менять нельзя.", Status = 400 });
         if (result == 0)
             return NotFound(new ProblemDetails { Title = "Авария не найдена", Status = 404 });
         if (result == -1)
@@ -65,31 +104,37 @@ public class AccidentsController : ControllerBase
     public async Task<IActionResult> Export([FromQuery] AccidentFilter filter, CancellationToken ct)
     {
         var data = await store.List(filter, true, ct);
-        var csv = new StringBuilder("id;pw;direction;center;category;networkType;serviceElement;stationCount;equipment;alarmType;description;beginTime;endTime;battery;generator;duration;downtime;totalDowntime;notified;notes\r\n");
+        var csv = new StringBuilder("id;pw;direction;center;category;networkType;serviceElement;stationCount;equipment;alarmType;description;beginTime;endTime;battery;generator;duration;downtime;totalDowntime;notified;notes;timeBasis;sourceSheet;sourceRow;sourceSnapshotAtLocal\r\n");
         foreach (var a in data.Items)
         {
+            var source = a.Source == null ? default(JsonElement) : JsonSerializer.SerializeToElement(a.Source);
+            string Meta(string field) => source.ValueKind == JsonValueKind.Object && source.TryGetProperty(field, out var value) && value.ValueKind != JsonValueKind.Null ? value.ToString() : "";
             var values = new[]
             {
                 a.Id.ToString(CultureInfo.InvariantCulture),
                 a.Pw,
                 a.Direction,
                 a.Center,
-                a.Category.ToString(),
+                a.CategoryCode ?? a.Category.ToString(),
                 a.NetworkType,
                 a.ServiceElement,
                 a.IsSector ? "С" : a.StationCount.ToString(),
                 a.Equipment,
                 a.AlarmType,
                 a.Description,
-                a.BeginTime!.Value.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss"),
-                a.EndTime?.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss") ?? "НВ",
-                JournalOptions.FormatSeconds(a.BatterySeconds),
-                JournalOptions.FormatSeconds(a.GeneratorSeconds),
-                JournalOptions.FormatSeconds(a.DurationSeconds),
-                JournalOptions.FormatSeconds(a.DowntimeSeconds),
-                a.TotalDowntimeSeconds.HasValue ? JournalOptions.FormatSeconds(a.TotalDowntimeSeconds.Value) : "не определён для сектора",
+                a.BeginTimeLocal ?? a.BeginTime!.Value.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss"),
+                a.EndTimeLocal ?? a.EndTime?.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss") ?? "НВ",
+                Format(a.BatterySeconds),
+                Format(a.GeneratorSeconds),
+                Format(a.DurationSeconds),
+                Format(a.DowntimeSeconds),
+                Format(a.TotalDowntimeSeconds),
                 a.Notified,
-                a.Notes
+                a.Notes,
+                a.TimeBasis,
+                Meta("sheet"),
+                Meta("row"),
+                Meta("snapshotAtLocal")
             };
             csv.AppendJoin(";", values.Select(Escape)).Append("\r\n");
         }
@@ -98,6 +143,7 @@ public class AccidentsController : ControllerBase
         return File(utf8.GetPreamble().Concat(utf8.GetBytes(csv.ToString())).ToArray(), "text/csv; charset=utf-8", $"accidents_{filter.UtcFrom:yyyyMMdd}_{filter.UtcTo:yyyyMMdd}.csv");
     }
 
+    private static string Format(decimal? value) => value.HasValue ? JournalOptions.FormatSeconds(value.Value) : "";
     private static string Escape(string? value)
     {
         value ??= "";

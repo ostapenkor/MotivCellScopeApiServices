@@ -782,3 +782,83 @@ input,select,textarea {
 .table-scroll {
     position:relative;
 }
+
+/* Обзор данных использует те же фильтры, что журнал и CSV. */
+.dashboard-mark {display:flex;align-items:center;padding:9px 13px;border:1px solid #d5dfd7;border-radius:20px;color:var(--green);background:#edf3eb;font-size:11px;white-space:nowrap}
+.dashboard-heading {margin-bottom:25px}
+.archive-banner {padding:18px 22px;margin-bottom:22px;background:#eef2e9;border-left:3px solid #6f8b6a;border-radius:0 7px 7px 0;color:#455b47;font-size:12px;line-height:1.7;white-space:pre-line}
+.archive-banner strong {display:block;font-size:13px;margin-bottom:5px;color:#344e37}
+.archive-banner p {margin:0;max-width:1100px}
+.source-strip {display:flex;justify-content:space-between;align-items:center;margin:24px 0}
+.source-strip>div {min-width:0;margin-right:20px}
+.source-strip .eyebrow {display:block;font-size:9px;letter-spacing:1.4px;margin-bottom:5px}
+.source-strip strong {display:block;font-size:16px;font-weight:600;margin-bottom:4px}
+.source-strip .small {display:block}
+.dashboard-kpis {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));grid-gap:17px;margin:25px 0}
+.kpi-card {min-width:0;background:#fff;border:1px solid var(--line);border-radius:8px;padding:23px 24px;position:relative;overflow:hidden}
+.kpi-card>span {display:block;color:var(--muted);font-size:12px}
+.kpi-card>strong {display:block;font-size:35px;font-weight:600;line-height:1.2;letter-spacing:-.7px;margin:12px 0 10px;overflow-wrap:break-word}
+.kpi-card>small {display:block;font-size:10px;line-height:1.6;color:var(--muted)}
+.kpi-primary {background:#244d3e;border-color:#244d3e;color:white}
+.kpi-primary>span,.kpi-primary>small {color:#d2e1cf}
+.kpi-primary:after {content:"";position:absolute;width:100px;height:100px;border:1px solid #53755c;border-radius:50%;right:-35px;top:-25px}
+.chart-grid {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-gap:22px}
+.chart-panel {min-width:0;margin-bottom:0;padding:27px;position:relative}
+.chart-heading {display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px}
+.chart-heading>div {min-width:0;margin-right:15px}
+.chart-heading .eyebrow {font-size:9px;margin-bottom:6px}
+.chart-heading h2 {margin:0;font-size:20px}
+.chart-unit {font-size:10px;color:var(--muted);padding-top:20px}
+.bar-row {margin-bottom:17px}
+.bar-row:last-child {margin-bottom:0}
+.bar-caption {display:flex;justify-content:space-between;font-size:12px;align-items:flex-start;margin-bottom:8px}
+.bar-caption>span {min-width:0;overflow-wrap:break-word;padding-right:12px}
+.bar-caption>strong {font-size:12px;color:var(--ink);font-weight:600}
+.bar-track {height:7px;background:#eef2eb;border-radius:5px;overflow:hidden}
+.bar-fill {display:block;height:100%;min-width:0;border-radius:5px;background:#426e55}
+.bar-fill-orange {background:#e99852}
+.monthly-panel {grid-column:1/-1}
+.month-chart {position:relative;min-width:0;max-width:100%;overflow:hidden}
+.month-chart>svg {display:block;width:100%;height:auto;min-height:170px}
+.chart-grid-line {stroke:#e4eae0;stroke-width:1;stroke-dasharray:4 4}
+.chart-axis-label {font-size:10px;fill:#778275;font-family:Arial,Helvetica,sans-serif}
+.chart-value {font-size:11px;fill:#425e44;font-family:Arial,Helvetica,sans-serif}
+.month-bar {fill:#648363}
+.month-bar:hover {fill:var(--orange)}
+.chart-footnote {margin:13px 0 0;line-height:1.7}
+.empty-chart {padding:35px 10px;color:var(--muted);font-size:13px;text-align:center}
+.dashboard-bottom {display:flex;align-items:center;justify-content:space-between;margin-top:23px}
+.dashboard-bottom>p {margin:0 25px 0 0;max-width:750px;line-height:1.7}
+.field-help {font-size:10px;line-height:1.6;color:var(--muted);margin:8px 0 0}
+.filter-time-note {margin:16px 0 0;line-height:1.7;font-size:10px;max-width:1050px}
+.category-unmapped small {color:#946327}
+.badge-archive {color:#5f6c58;background:#edf0e5}
+.dashboard-kpis #dash-downtime {font-size:29px;font-family:Consolas,monospace;letter-spacing:-1px}
+@media(max-width:1000px){
+    .dashboard-kpis {grid-template-columns:repeat(2,minmax(0,1fr))}
+    .source-strip {align-items:flex-start}
+    .chart-grid {grid-gap:17px}
+    .chart-panel {padding:23px}
+    .dashboard-bottom {display:block}
+    .dashboard-bottom>p {margin-bottom:18px}
+}
+@media(max-width:750px){
+    .dashboard-mark {display:inline-flex;margin-top:18px}
+    .dashboard-kpis {grid-gap:12px}
+    .kpi-card {padding:20px}
+    .kpi-card>strong {font-size:31px}
+    .chart-grid {display:block}
+    .chart-panel {margin-bottom:20px}
+    .source-strip {display:block}
+    .source-strip .button {margin-top:15px}
+    .archive-banner {padding:15px 17px}
+    .monthly-panel .chart-heading {display:block}
+    .monthly-panel .chart-heading>span {display:block;margin-top:10px}
+    .dashboard-kpis #dash-downtime {font-size:23px}
+}
+@media(max-width:420px){
+    .dashboard-kpis {display:block}
+    .kpi-card {margin-bottom:12px}
+    .kpi-card>strong {font-size:32px}
+    .chart-heading h2 {font-size:18px}
+}

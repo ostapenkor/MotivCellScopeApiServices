@@ -1,10 +1,14 @@
 using System.Data;
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using MotivCellScopeApiServices.Contracts;
 using MySqlConnector;
 
 namespace MotivCellScopeApiServices.Data;
-// Параметризованные SQL-запросы нового модуля. Legacy EF-модель не меняется.
-public class AccidentStore
+// Простые параметризованные запросы. Каждая запись меняется одной транзакцией.
+public partial class AccidentStore
 {
     private readonly string connectionString;
     public AccidentStore(IConfiguration config) => connectionString = config.GetConnectionString("Journal")!;
@@ -14,6 +18,8 @@ public class AccidentStore
         try
         {
             await db.OpenAsync(ct);
+            using var setup = new MySqlCommand("SET SESSION group_concat_max_len=65535", db);
+            await setup.ExecuteNonQueryAsync(ct);
             return db;
         }
         catch
@@ -26,71 +32,93 @@ public class AccidentStore
     private static void Parameters(MySqlCommand cmd, params (string Name, object? Value)[] values)
     {
         foreach (var p in values)
-            cmd.Parameters.AddWithValue("@" + p.Name, p.Value);
+            cmd.Parameters.AddWithValue("@" + p.Name, p.Value ?? DBNull.Value);
     }
 
-    private const string Columns = "a.*,NULLIF(a.END_TIME,'0000-00-00 00:00:00') AS real_end,u.username AS author";
+    private static object? Optional(string? s) => string.IsNullOrWhiteSpace(s) ? null : s;
+    private static decimal? Number(MySqlDataReader r, string name) => r.IsDBNull(r.GetOrdinal(name)) ? null : r.GetDecimal(name);
+    private static string Local(DateTime value) => value.ToString("yyyy-MM-ddTHH:mm:ss.fff", CultureInfo.InvariantCulture);
+    private static DateTimeOffset Utc(DateTime value) => new(DateTime.SpecifyKind(value, DateTimeKind.Utc));
+    private const string Columns = "a.*,u.username AS author";
     private static AccidentDto Read(MySqlDataReader r, DateTimeOffset now)
     {
-        var begin = new DateTimeOffset(DateTime.SpecifyKind(r.GetDateTime("BEGIN_TIME"), DateTimeKind.Utc));
-        DateTimeOffset? end = r.IsDBNull(r.GetOrdinal("real_end")) ? null : new DateTimeOffset(DateTime.SpecifyKind(r.GetDateTime("real_end"), DateTimeKind.Utc));
-        int number = r.GetInt32("NUMB_RBS");
+        var begin = r.GetDateTime("begin_at");
+        DateTime? end = r.IsDBNull(r.GetOrdinal("end_at")) ? null : r.GetDateTime("end_at");
+        bool local = r.GetString("time_basis") == "source_local";
+        bool historical = !r.IsDBNull(r.GetOrdinal("source_row_id"));
         return new AccidentDto
         {
             Id = r.GetInt32("id"),
             Pw = r.GetString("PW"),
             Direction = r.GetString("NAPR"),
             Center = r.GetString("TEHC"),
-            Category = r.GetInt32("KATEG"),
+            Category = r.IsDBNull(r.GetOrdinal("KATEG")) ? null : r.GetInt32("KATEG"),
+            CategoryCode = r.GetString("category_code"),
+            NeedsCategoryMapping = r.IsDBNull(r.GetOrdinal("KATEG")),
             NetworkType = r.GetString("NETW_TYPE"),
             ServiceElement = r.GetString("SERV_ELEM"),
-            IsSector = number == -1,
-            StationCount = number == -1 ? null : number,
+            IsSector = r.GetBoolean("is_sector"),
+            StationCount = r.IsDBNull(r.GetOrdinal("station_count")) ? null : r.GetInt32("station_count"),
             Equipment = r.GetString("EQIP_TYPE"),
             AlarmType = r.GetString("ALARM_TYPE"),
             Description = r.GetString("DESCR"),
-            BeginTime = begin,
-            EndTime = end,
-            BatterySeconds = (long)r.GetTimeSpan("AKB").TotalSeconds,
-            GeneratorSeconds = (long)r.GetTimeSpan("DGU").TotalSeconds,
-            DowntimeSeconds = (long)r.GetTimeSpan("PROSTOY").TotalSeconds,
-            Notified = r.GetString("ALARM_WHO"),
-            Notes = r.GetString("DESC_NOTICE"),
+            TimeBasis = local ? "source_local" : "utc",
+            BeginTime = local ? null : Utc(begin),
+            EndTime = local || end == null ? null : Utc(end.Value),
+            BeginTimeLocal = local ? Local(begin) : null,
+            EndTimeLocal = local && end != null ? Local(end.Value) : null,
+            BatterySeconds = Number(r, "battery_seconds"),
+            GeneratorSeconds = Number(r, "generator_seconds"),
+            DowntimeSeconds = Number(r, "downtime_seconds"),
+            Notified = r.GetString("notified"),
+            Notes = r.GetString("notes"),
             Version = r.GetInt32("version"),
             CreatedBy = r.GetInt32("created_by"),
             CreatedByName = r.GetString("author"),
-            DurationSeconds = (long)Math.Max(0, ((end ?? now) - begin).TotalSeconds),
-            TotalDowntimeSeconds = number == -1 ? null : (long)r.GetTimeSpan("PROSTOY").TotalSeconds * number,
-            ServerTimeUtc = now
+            DurationSeconds = Number(r, "duration_seconds"),
+            TotalDowntimeSeconds = Number(r, "total_downtime_seconds"),
+            ServerTimeUtc = now,
+            Source = historical ? new
+            {
+                isHistorical = true,
+                batchId = r.GetInt32("batch_id"),
+                sheet = r.GetString("sheet_name"),
+                row = r.GetInt32("row_number"),
+                timeZone = r.IsDBNull(r.GetOrdinal("time_zone")) ? null : r.GetString("time_zone"),
+                snapshotAtLocal = r.IsDBNull(r.GetOrdinal("snapshot_at")) ? null : Local(r.GetDateTime("snapshot_at"))
+            }
+
+            : null
         };
     }
 
-    private const string Where = "a.BEGIN_TIME < @to AND (a.END_TIME='0000-00-00 00:00:00' OR a.END_TIME>@from) " + "AND (@direction IS NULL OR a.NAPR=@direction) AND (@center IS NULL OR a.TEHC=@center) " + "AND (@category IS NULL OR a.KATEG=@category) AND (@network IS NULL OR a.NETW_TYPE=@network) " + "AND (@status='all' OR (@status='open' AND a.END_TIME='0000-00-00 00:00:00') OR (@status='closed' AND a.END_TIME<>'0000-00-00 00:00:00')) " + "AND (@search IS NULL OR a.SERV_ELEM LIKE @search ESCAPE '=' OR a.DESCR LIKE @search ESCAPE '=' OR a.PW LIKE @search ESCAPE '=')";
-    private static object? Optional(string? s) => string.IsNullOrWhiteSpace(s) ? null : s;
+    private const string Where = "a.begin_at < @to AND (a.end_at IS NULL OR a.end_at>@from) " + "AND (@direction IS NULL OR a.NAPR=@direction) AND (@center IS NULL OR a.TEHC=@center) " + "AND (@category IS NULL OR a.KATEG=@category) AND (@categoryCode IS NULL OR BINARY a.category_code=BINARY @categoryCode) " + "AND (@network IS NULL OR a.NETW_TYPE=@network OR EXISTS(SELECT 1 FROM journal_accident_networks nx JOIN journal_network_types nt ON nt.id=nx.network_type_id WHERE nx.accident_id=a.id AND BINARY nt.code=BINARY @network)) " + "AND (@scope='all' OR (@scope='historical' AND a.source_row_id IS NOT NULL) OR (@scope='live' AND a.source_row_id IS NULL)) " + "AND (@status='all' OR (@status='open' AND a.end_at IS NULL) OR (@status='closed' AND a.end_at IS NOT NULL)) " + "AND (@search IS NULL OR a.SERV_ELEM LIKE @search ESCAPE '=' OR a.DESCR LIKE @search ESCAPE '=' OR a.PW LIKE @search ESCAPE '=')";
     private static void FilterParameters(MySqlCommand cmd, AccidentFilter f)
     {
         string? search = string.IsNullOrWhiteSpace(f.Search) ? null : "%" + f.Search.Replace("=", "==").Replace("%", "=%").Replace("_", "=_") + "%";
-        Parameters(cmd, ("from", f.UtcFrom), ("to", f.UtcTo), ("direction", Optional(f.Direction)), ("center", Optional(f.Center)), ("category", f.Category), ("network", Optional(f.NetworkType)), ("status", f.Status), ("search", search));
+        Parameters(cmd, ("from", f.UtcFrom), ("to", f.UtcTo), ("direction", Optional(f.Direction)), ("center", Optional(f.Center)), ("category", f.Category), ("categoryCode", Optional(f.CategoryCode)), ("network", Optional(f.NetworkType)), ("status", f.Status), ("scope", f.SourceScope), ("search", search));
     }
 
     public async Task<AccidentPage> List(AccidentFilter f, bool export, CancellationToken ct)
     {
         await using var db = await Open(ct);
         await using var tx = await db.BeginTransactionAsync(IsolationLevel.RepeatableRead, ct);
-        int total, open, categoryOne;
-        using (var count = new MySqlCommand("SELECT COUNT(*),COALESCE(SUM(END_TIME='0000-00-00 00:00:00'),0),COALESCE(SUM(KATEG=1),0) FROM accident_reports a WHERE " + Where, db, tx))
+        int total, open, categoryOne, unmapped, historicalOpen;
+        using (var cmd = new MySqlCommand("SELECT COUNT(*),COALESCE(SUM(end_at IS NULL),0),COALESCE(SUM(KATEG=1),0),COALESCE(SUM(KATEG IS NULL),0),COALESCE(SUM(end_at IS NULL AND source_row_id IS NOT NULL),0) FROM journal_report a WHERE " + Where, db, tx))
         {
-            FilterParameters(count, f);
-            await using var r = await count.ExecuteReaderAsync(ct);
+            FilterParameters(cmd, f);
+            await using var r = await cmd.ExecuteReaderAsync(ct);
             await r.ReadAsync(ct);
             total = r.GetInt32(0);
             open = r.GetInt32(1);
             categoryOne = r.GetInt32(2);
+            unmapped = r.GetInt32(3);
+            historicalOpen = r.GetInt32(4);
         }
 
         var now = DateTimeOffset.UtcNow;
         var rows = new List<AccidentDto>();
-        using (var cmd = new MySqlCommand("SELECT " + Columns + " FROM accident_reports a JOIN users u ON u.user_id=a.created_by WHERE " + Where + " ORDER BY a.BEGIN_TIME DESC,a.id DESC" + (export ? "" : " LIMIT @take OFFSET @skip"), db, tx))
+        using (var cmd = new MySqlCommand("SELECT " + Columns + " FROM journal_report a JOIN users u ON u.user_id=a.created_by WHERE " + Where + " ORDER BY a.begin_at DESC,a.id DESC" + (export ? "" : " LIMIT @take OFFSET @skip"), db, tx))
         {
             FilterParameters(cmd, f);
             if (!export)
@@ -101,13 +129,13 @@ public class AccidentStore
         }
 
         await tx.CommitAsync(ct);
-        return new(total, f.Page, f.PageSize, now, new { total, open, closed = total - open, categoryOne }, rows);
+        return new(total, f.Page, f.PageSize, now, new { total, open, closed = total - open, categoryOne, unmappedCategories = unmapped, historicalOpen, liveOpen = open - historicalOpen }, rows);
     }
 
     public async Task<AccidentDto?> Get(int id, CancellationToken ct)
     {
         await using var db = await Open(ct);
-        using var cmd = new MySqlCommand("SELECT " + Columns + " FROM accident_reports a JOIN users u ON u.user_id=a.created_by WHERE a.id=@id", db);
+        using var cmd = new MySqlCommand("SELECT " + Columns + " FROM journal_report a JOIN users u ON u.user_id=a.created_by WHERE a.id=@id", db);
         Parameters(cmd, ("id", id));
         await using var r = await cmd.ExecuteReaderAsync(ct);
         return await r.ReadAsync(ct) ? Read(r, DateTimeOffset.UtcNow) : null;
@@ -120,33 +148,138 @@ public class AccidentStore
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
-    // 0 = строки нет; -1 = версия устарела; положительное значение = ID.
+    // Только эти имена таблиц используются в SQL. Пользовательские значения всегда в параметрах.
+    private static string[] Networks(string value) => value is "LTE/GSM" or "GSM LTE" or "GSM, LTE" or "GSM/LTE" ? new[]
+    {
+        "GSM",
+        "LTE"
+    }
+
+    : new[]
+    {
+        value
+    };
+    private static async Task<int> Code(MySqlConnection db, MySqlTransaction? tx, string table, string code, bool create, CancellationToken ct)
+    {
+        if (create)
+        {
+            using var add = new MySqlCommand($"INSERT IGNORE INTO {table}(code,label) VALUES(@code,@code)", db, tx);
+            Parameters(add, ("code", code));
+            await add.ExecuteNonQueryAsync(ct);
+        }
+
+        using var find = new MySqlCommand($"SELECT id FROM {table} WHERE BINARY code=BINARY @code", db, tx);
+        Parameters(find, ("code", code));
+        var result = await find.ExecuteScalarAsync(ct);
+        return result == null ? 0 : Convert.ToInt32(result);
+    }
+
+    private static async Task<int> Category(MySqlConnection db, MySqlTransaction? tx, string code, bool create, CancellationToken ct)
+    {
+        if (create)
+        {
+            using var add = new MySqlCommand("INSERT IGNORE INTO journal_categories(code) VALUES(@code)", db, tx);
+            Parameters(add, ("code", code));
+            await add.ExecuteNonQueryAsync(ct);
+        }
+
+        using var find = new MySqlCommand("SELECT id FROM journal_categories WHERE BINARY code=BINARY @code", db, tx);
+        Parameters(find, ("code", code));
+        var result = await find.ExecuteScalarAsync(ct);
+        return result == null ? 0 : Convert.ToInt32(result);
+    }
+
+    private static async Task<int> Label(MySqlConnection db, MySqlTransaction tx, string table, string label, CancellationToken ct)
+    {
+        byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(label));
+        using var add = new MySqlCommand($"INSERT IGNORE INTO {table}(label,label_hash) VALUES(@label,@hash)", db, tx);
+        Parameters(add, ("label", label), ("hash", hash));
+        await add.ExecuteNonQueryAsync(ct);
+        using var find = new MySqlCommand($"SELECT id,label FROM {table} WHERE label_hash=@hash", db, tx);
+        Parameters(find, ("hash", hash));
+        await using var r = await find.ExecuteReaderAsync(ct);
+        await r.ReadAsync(ct);
+        if (r.GetString(1) != label)
+            throw new InvalidOperationException("Коллизия хеша справочника; значение не объединено.");
+        return r.GetInt32(0);
+    }
+
+    public async Task<string?> ValidateReferences(AccidentInput a, CancellationToken ct)
+    {
+        await using var db = await Open(ct);
+        if (await Code(db, null, "journal_directions", a.Direction, false, ct) == 0)
+            return "Выберите направление из справочника.";
+        if (!string.IsNullOrWhiteSpace(a.Center) && await Code(db, null, "journal_centers", a.Center, false, ct) == 0)
+            return "Выберите ТЦ из справочника или оставьте неизвестным.";
+        if (await Code(db, null, "journal_alarm_types", a.AlarmType, false, ct) == 0)
+            return "Выберите тип аварии из справочника.";
+        foreach (var n in Networks(a.NetworkType))
+            if (await Code(db, null, "journal_network_types", n, false, ct) == 0)
+                return "Выберите тип сети из справочника.";
+        if (await Category(db, null, a.CategoryCode ?? a.Category!.Value.ToString(), false, ct) == 0)
+            return "Выберите исходный код категории из справочника.";
+        return null;
+    }
+
     public async Task<int> Save(int id, AccidentInput a, int userId, CancellationToken ct)
     {
         await using var db = await Open(ct);
         await using var tx = await db.BeginTransactionAsync(ct);
         if (id != 0)
         {
-            using var check = new MySqlCommand("SELECT version FROM accident_reports WHERE id=@id FOR UPDATE", db, tx);
+            using var check = new MySqlCommand("SELECT version,time_basis FROM journal_accidents WHERE id=@id FOR UPDATE", db, tx);
             Parameters(check, ("id", id));
-            var version = await check.ExecuteScalarAsync(ct);
-            if (version == null)
+            await using var r = await check.ExecuteReaderAsync(ct);
+            if (!await r.ReadAsync(ct))
                 return 0;
-            if (Convert.ToInt32(version) != a.Version)
+            if (r.GetInt32(0) != a.Version)
                 return -1;
+            if (r.GetString(1) != a.TimeBasis)
+                return -2;
         }
 
-        const string fields = "PW=@pw,NAPR=@direction,TEHC=@center,KATEG=@category,NETW_TYPE=@network,SERV_ELEM=@element,NUMB_RBS=@number,EQIP_TYPE=@equipment,ALARM_TYPE=@type,DESCR=@description,BEGIN_TIME=@begin,END_TIME=COALESCE(@end,'0000-00-00 00:00:00'),AKB=@battery,DGU=@generator,LENGHT=@duration,PROSTOY=@downtime,COMMON_PROSTOY=@total,ALARM_WHO=@notified,DESC_NOTICE=@notes";
-        using var cmd = new MySqlCommand(id == 0 ? "INSERT INTO accident_reports SET " + fields + ",created_by=@user" : "UPDATE accident_reports SET " + fields + ",version=version+1 WHERE id=@id", db, tx);
-        var now = DateTimeOffset.UtcNow;
-        long duration = (long)Math.Max(0, ((a.EndTime ?? now) - a.BeginTime!.Value).TotalSeconds);
-        Parameters(cmd, ("pw", a.Pw ?? ""), ("direction", a.Direction), ("center", a.Center), ("category", a.Category), ("network", a.NetworkType), ("element", a.ServiceElement), ("number", a.IsSector ? -1 : a.StationCount), ("equipment", a.Equipment ?? ""), ("type", a.AlarmType), ("description", a.Description), ("begin", a.BeginTime.Value.UtcDateTime), ("end", a.EndTime?.UtcDateTime), ("battery", TimeSpan.FromSeconds(a.BatterySeconds)), ("generator", TimeSpan.FromSeconds(a.GeneratorSeconds)), ("duration", JournalOptions.FormatSeconds(duration)), ("downtime", TimeSpan.FromSeconds(a.DowntimeSeconds)), ("total", a.IsSector ? null : TimeSpan.FromSeconds(a.DowntimeSeconds * a.StationCount!.Value)), ("notified", a.Notified ?? ""), ("notes", a.Notes ?? ""), ("user", userId), ("id", id));
-        await cmd.ExecuteNonQueryAsync(ct);
-        bool created = id == 0;
-        if (created)
-            id = (int)cmd.LastInsertedId;
-        await Audit(db, tx, userId, id, created ? "create" : "update", ct);
+        id = await Write(db, tx, id, a, userId, null, false, ct);
+        await Audit(db, tx, userId, id, a.Version == 0 ? "create" : "update", ct);
         await tx.CommitAsync(ct);
+        return id;
+    }
+
+    private static async Task<int> Write(MySqlConnection db, MySqlTransaction tx, int id, AccidentInput a, int userId, int? sourceRow, bool createCodes, CancellationToken ct)
+    {
+        int direction = await Code(db, tx, "journal_directions", a.Direction, createCodes, ct);
+        int? center = string.IsNullOrWhiteSpace(a.Center) ? null : await Code(db, tx, "journal_centers", a.Center, createCodes, ct);
+        int category = await Category(db, tx, a.CategoryCode ?? a.Category!.Value.ToString(), createCodes, ct);
+        int alarm = await Code(db, tx, "journal_alarm_types", a.AlarmType, createCodes, ct);
+        int element = await Label(db, tx, "journal_service_elements", a.ServiceElement, ct);
+        int? ticket = string.IsNullOrWhiteSpace(a.Pw) ? null : await Label(db, tx, "journal_tickets", a.Pw, ct);
+        const string fields = "direction_id=@dir,center_id=@center,category_id=@cat,alarm_type_id=@alarm,service_element_id=@element,ticket_id=@ticket,description=@description,begin_at=@begin,end_at=@end,time_basis=@basis,station_count=@count,is_sector=@sector,battery_seconds=@battery,generator_seconds=@generator,downtime_seconds=@downtime,notified=@notified,notes=@notes";
+        using var cmd = new MySqlCommand(id == 0 ? "INSERT INTO journal_accidents SET " + fields + ",created_by=@user,source_row_id=@source" : "UPDATE journal_accidents SET " + fields + ",version=version+1 WHERE id=@id", db, tx);
+        Parameters(cmd, ("dir", direction), ("center", center), ("cat", category), ("alarm", alarm), ("element", element), ("ticket", ticket), ("description", a.Description), ("begin", a.StoredBegin), ("end", a.StoredEnd), ("basis", a.TimeBasis), ("count", a.StationCount), ("sector", a.IsSector), ("battery", a.BatterySeconds), ("generator", a.GeneratorSeconds), ("downtime", a.DowntimeSeconds), ("notified", a.Notified ?? ""), ("notes", a.Notes ?? ""), ("user", userId), ("source", sourceRow), ("id", id));
+        await cmd.ExecuteNonQueryAsync(ct);
+        if (id == 0)
+            id = (int)cmd.LastInsertedId;
+        using (var clear = new MySqlCommand("DELETE FROM journal_accident_networks WHERE accident_id=@id;DELETE FROM journal_accident_equipment WHERE accident_id=@id", db, tx))
+        {
+            Parameters(clear, ("id", id));
+            await clear.ExecuteNonQueryAsync(ct);
+        }
+
+        foreach (var n in Networks(a.NetworkType).Distinct())
+        {
+            int network = await Code(db, tx, "journal_network_types", n, createCodes, ct);
+            using var link = new MySqlCommand("INSERT INTO journal_accident_networks VALUES(@id,@n)", db, tx);
+            Parameters(link, ("id", id), ("n", network));
+            await link.ExecuteNonQueryAsync(ct);
+        }
+
+        foreach (var e in (a.Equipment ?? "").Split('\n').Select(x => x.TrimEnd('\r')).Where(x => x != "").Distinct(StringComparer.Ordinal))
+        {
+            int model = await Label(db, tx, "journal_equipment_models", e, ct);
+            using var link = new MySqlCommand("INSERT INTO journal_accident_equipment VALUES(@id,@e)", db, tx);
+            Parameters(link, ("id", id), ("e", model));
+            await link.ExecuteNonQueryAsync(ct);
+        }
+
         return id;
     }
 
@@ -154,14 +287,14 @@ public class AccidentStore
     {
         await using var db = await Open(ct);
         await using var tx = await db.BeginTransactionAsync(ct);
-        using var check = new MySqlCommand("SELECT version FROM accident_reports WHERE id=@id FOR UPDATE", db, tx);
+        using var check = new MySqlCommand("SELECT version FROM journal_accidents WHERE id=@id FOR UPDATE", db, tx);
         Parameters(check, ("id", id));
         var current = await check.ExecuteScalarAsync(ct);
         if (current == null)
             return 0;
         if (Convert.ToInt32(current) != version)
             return -1;
-        using var cmd = new MySqlCommand("DELETE FROM accident_reports WHERE id=@id", db, tx);
+        using var cmd = new MySqlCommand("DELETE FROM journal_accidents WHERE id=@id", db, tx);
         Parameters(cmd, ("id", id));
         await cmd.ExecuteNonQueryAsync(ct);
         await Audit(db, tx, userId, id, "delete", ct);

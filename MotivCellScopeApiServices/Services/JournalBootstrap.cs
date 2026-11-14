@@ -62,19 +62,13 @@ public static class JournalBootstrap
             await access.ExecuteNonQueryAsync();
         }
 
+        await tx.CommitAsync();
         if (fresh)
         {
-            using var seed = new MySqlCommand("""
-                INSERT INTO accident_reports(PW,NAPR,TEHC,KATEG,NETW_TYPE,SERV_ELEM,NUMB_RBS,EQIP_TYPE,ALARM_TYPE,DESCR,BEGIN_TIME,END_TIME,AKB,DGU,LENGHT,PROSTOY,COMMON_PROSTOY,ALARM_WHO,DESC_NOTICE,created_by)
-                SELECT '', 'СВН','ЕКБ',1,'LTE','БС ЕКБ-001 · ул. Малышева, 51',3,'Резервное питание','ЭЛ','Отключение основного электропитания',UTC_TIMESTAMP()-INTERVAL 4 HOUR,'0000-00-00 00:00:00','01:30:00','02:00:00','04:00:00','00:20:00','01:00:00','Дежурный инженер','Ожидаем восстановление сети',user_id FROM users WHERE username='admin';
-                INSERT INTO accident_reports(NAPR,TEHC,KATEG,NETW_TYPE,SERV_ELEM,NUMB_RBS,ALARM_TYPE,DESCR,BEGIN_TIME,END_TIME,LENGHT,PROSTOY,COMMON_PROSTOY,created_by)
-                SELECT 'ХМЯН','СРГ',2,'LTE/GSM','БС СРГ-014 · Сургут',2,'РРС','Восстановлен радиорелейный пролёт',UTC_TIMESTAMP()-INTERVAL 1 DAY,UTC_TIMESTAMP()-INTERVAL 22 HOUR,'02:00:00','01:15:00','02:30:00',user_id FROM users WHERE username='admin';
-                INSERT INTO accident_reports(NAPR,TEHC,KATEG,NETW_TYPE,SERV_ELEM,NUMB_RBS,ALARM_TYPE,DESCR,BEGIN_TIME,LENGHT,PROSTOY,created_by)
-                SELECT 'ЮЗН','КРГ',3,'GSM','Сектор B · БС КРГ-008',-1,'RBS','Деградация одного сектора',UTC_TIMESTAMP()-INTERVAL 1 HOUR,'01:00:00','00:10:00',user_id FROM users WHERE username='admin';
-                """, db, tx);
-            await seed.ExecuteNonQueryAsync();
+            using var find = new MySqlCommand("SELECT user_id FROM users WHERE username='admin'", db);
+            int actor = Convert.ToInt32(await find.ExecuteScalarAsync());
+            var store = new MotivCellScopeApiServices.Data.AccidentStore(config);
+            await store.Save(0, new AccidentInput { Direction = "СВН", Center = "ЕКБ", Category = 1, NetworkType = "LTE", ServiceElement = "Демонстрационная БС 001", StationCount = 3, AlarmType = "ЭЛ", Description = "Учебный пример: отключение питания", BeginTime = DateTimeOffset.UtcNow.AddHours(-4), BatterySeconds = 5400, GeneratorSeconds = 7200, DowntimeSeconds = 1200, Notes = "Демо; можно удалить администратору." }, actor, default);
         }
-
-        await tx.CommitAsync();
     }
 }

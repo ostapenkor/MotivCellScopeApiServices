@@ -197,16 +197,22 @@ try:
     invalid = (
         {"direction": "made-up"}, {"center": "made-up"}, {"category": 0}, {"category": 4},
         {"networkType": "5G"}, {"alarmType": "made-up"}, {"serviceElement": ""},
-        {"stationCount": 0}, {"stationCount": 10001}, {"stationCount": None, "isSector": False},
+        {"stationCount": 0}, {"stationCount": 10001},
         {"stationCount": 3, "isSector": True}, {"batterySeconds": -1},
-        {"generatorSeconds": MAX_TIME + 1}, {"downtimeSeconds": MAX_TIME + 1},
-        {"stationCount": 10000, "downtimeSeconds": 3600}, {"description": "x" * 451},
-        {"pw": "javascript:alert(1)"}, {"beginTime": iso(NOW + timedelta(days=1))},
+        {"generatorSeconds": -1}, {"downtimeSeconds": -1},
+        {"description": "x" * 451},
+        {"pw": "x" * 451}, {"beginTime": iso(NOW + timedelta(days=1))},
         {"endTime": iso(NOW - timedelta(days=2))}, {"endTime": iso(NOW + timedelta(days=1))},
         {"beginTime": "not-a-date"}, {"beginTime": 123}, {"beginTime": {}},
     )
     for changed in invalid:
         check(duty.request("POST", "/api/accidents", accident(**changed))[0] == 400, "server validates: " + ",".join(changed))
+
+    unknown = create(duty, accident(stationCount=None, isSector=False, serviceElement=MARKER+"_unknown_count"))
+    check(unknown["stationCount"] is None and unknown["totalDowntimeSeconds"] is None, "unknown count is valid and differs from sector")
+    long_duration = create(duty, accident(stationCount=2, downtimeSeconds=3020400.125, generatorSeconds=3020400.125, batterySeconds=None, pw="NTT-QA-TICKET", serviceElement=MARKER+"_long_duration"))
+    check(long_duration["downtimeSeconds"] == 3020400.125 and long_duration["totalDowntimeSeconds"] == 6040800.25, "normalized decimal durations exceed old TIME cap exactly")
+    check(long_duration["batterySeconds"] is None and long_duration["pw"] == "NTT-QA-TICKET", "unknown duration and plain ticket code survive roundtrip")
 
     # Editing and optimistic concurrency: stale PUT and DELETE must not lose data.
     status, edited, _ = put(duty, saved, endTime=iso(NOW - timedelta(hours=6)), description="Closed " + MARKER)

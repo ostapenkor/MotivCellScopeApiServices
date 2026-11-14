@@ -78,9 +78,7 @@
         </main>
         <div id="application" hidden>
             <nav class="main-nav" aria-label="Разделы журнала">
-                <button type="button" data-page="reports" class="nav-button active">
-                    Отчётность
-                </button>
+                <button type="button" data-page="dashboard" class="nav-button">Обзор данных</button><button type="button" data-page="reports" class="nav-button">Журнал аварий</button>
                 <button type="button" data-page="editor" class="nav-button" id="new-tab">
                     ＋ Новая авария
                 </button>
@@ -94,18 +92,65 @@
             <main class="workspace">
                 <div id="notice" class="message" role="status" hidden>
                 </div>
-                <section id="reports-page" class="page">
+                <section id="dashboard-page" class="page" hidden>
+<div class="page-heading dashboard-heading">
+<div>
+<p class="eyebrow">СЕТЬ / АНАЛИТИЧЕСКИЙ ОБЗОР</p>
+<h1>Картина по событиям</h1>
+<p class="muted">Один набор данных. Понятные категории, периоды и происхождение каждой строки.</p>
+</div>
+<span class="dashboard-mark"><span class="signal-dot"></span>По записям журнала</span>
+</div>
+<div id="archive-banner" class="archive-banner" role="note">
+<strong>Архивная сводка</strong><p>«НВ» в импортированной строке означает, что авария не была закрыта на дату источника. Это не утверждение о текущем состоянии сети. Без даты среза длительность не рассчитывается до настоящего времени.</p>
+</div>
+<div class="source-strip">
+<div>
+<span class="eyebrow">ПРОИСХОЖДЕНИЕ ДАННЫХ</span><strong id="source-summary">Загружаем сведения об источнике…</strong><span id="source-period" class="small muted"></span>
+</div>
+<button type="button" id="data-period" class="button button-outline">Весь период данных ↗</button>
+</div>
+<div id="dashboard-filters-slot"></div>
+<div class="dashboard-kpis">
+<article class="kpi-card kpi-primary"><span>Событий в выборке</span><strong id="dash-total">—</strong><small>Сводные строки не дублируют события</small></article><article class="kpi-card"><span>НВ в архиве</span><strong id="dash-historical">—</strong><small>Открыты на дату источника</small></article><article class="kpi-card"><span>Текущие НВ</span><strong id="dash-live">—</strong><small>Новые записи оперативного журнала</small></article><article class="kpi-card"><span>Завершённые</span><strong id="dash-closed">—</strong><small>С указанным окончанием</small></article><article class="kpi-card"><span>Категории без соответствия</span><strong id="dash-unmapped" class="orange">—</strong><small>Сохранены исходные коды</small></article><article class="kpi-card"><span>Известный общий простой</span><strong id="dash-downtime">—</strong><small id="dash-unknown">Без подстановки нулей вместо неизвестных</small></article>
+</div>
+<div class="chart-grid">
+<section class="panel chart-panel"><div class="chart-heading">
+<div>
+<p class="eyebrow">РАСПРЕДЕЛЕНИЕ</p>
+<h2>По направлениям</h2>
+</div>
+<span class="chart-unit">событий</span>
+</div>
+<div id="direction-chart" class="bar-chart"></div></section><section class="panel chart-panel"><div class="chart-heading">
+<div>
+<p class="eyebrow">ПРИЧИНЫ И ТИПЫ</p>
+<h2>Типы аварий</h2>
+</div>
+<span class="chart-unit">событий</span>
+</div>
+<div id="alarm-chart" class="bar-chart"></div></section><section class="panel chart-panel monthly-panel"><div class="chart-heading">
+<div>
+<p class="eyebrow">ДИНАМИКА ИСТОЧНИКА</p>
+<h2>Начало событий по месяцам</h2>
+</div>
+<span id="dashboard-state" class="small muted" role="status"></span>
+</div>
+<div id="month-chart" class="month-chart"></div>
+<p class="small muted chart-footnote">Количество зарегистрированных событий, не доля недоступности сети. Месяцы берутся из дат начала.</p></section>
+</div>
+<div class="dashboard-bottom">
+<p class="small muted" id="source-quality">Неизвестные значения показываются как неизвестные, а не как нули.</p>
+<button type="button" id="dashboard-to-journal" class="button button-dark">Открыть события этой выборки →</button>
+</div>
+</section><section id="reports-page" class="page">
                     <div class="page-heading">
                         <div>
                             <p class="eyebrow">
                                 ОПЕРАТИВНЫЙ ЖУРНАЛ
                             </p>
-                            <h1>
-                                Отчётность по авариям
-                            </h1>
-                            <p class="muted">
-                                События, пересекающие выбранный период. Дата и время — UTC.
-                            </p>
+                            <h1>Журнал аварий</h1>
+                            <p class="muted">Архивные и оперативные записи одной выборки. Неизвестные данные не подменяются нулями.</p>
                         </div>
                         <button id="new-accident" type="button" class="button button-primary">
                             ＋ Зарегистрировать аварию
@@ -121,9 +166,7 @@
                             </strong>
                         </article>
                         <article>
-                            <span>
-                                Ещё не завершены
-                            </span>
+                            <span>НВ в выборке</span>
                             <strong id="stat-open" class="orange">
                                 —
                             </strong>
@@ -137,27 +180,22 @@
                             </strong>
                         </article>
                         <article>
-                            <span>
-                                Первая категория
-                            </span>
+                            <span>Без соответствия 1–3</span>
                             <strong id="stat-category">
                                 —
                             </strong>
                         </article>
                     </div>
-                    <form id="filter-form" class="filters panel">
+                    <div id="report-filters-slot">
+<form id="filter-form" class="filters panel">
                         <div class="filter-grid">
                             <div>
-                                <label for="filter-from">
-                                    Начало периода UTC
-                                </label>
-                                <input id="filter-from" type="datetime-local" required>
+                                <label for="filter-from">Начало календарного периода</label>
+                                <input id="filter-from" type="datetime-local" required step="0.001">
                             </div>
                             <div>
-                                <label for="filter-to">
-                                    Конец периода UTC, не включается
-                                </label>
-                                <input id="filter-to" type="datetime-local" required>
+                                <label for="filter-to">Конец периода (не включается)</label>
+                                <input id="filter-to" type="datetime-local" required step="0.001">
                             </div>
                             <div>
                                 <label for="filter-direction">
@@ -174,23 +212,8 @@
                                 </select>
                             </div>
                             <div>
-                                <label for="filter-category">
-                                    Категория
-                                </label>
-                                <select id="filter-category">
-                                    <option value="">
-                                        Все категории
-                                    </option>
-                                    <option>
-                                        1
-                                    </option>
-                                    <option>
-                                        2
-                                    </option>
-                                    <option>
-                                        3
-                                    </option>
-                                </select>
+                                <label for="filter-category">Исходная категория</label>
+                                <select id="filter-category"><option value="">Все исходные категории</option></select>
                             </div>
                             <div>
                                 <label for="filter-network">
@@ -207,9 +230,7 @@
                                     <option value="all">
                                         Все события
                                     </option>
-                                    <option value="open">
-                                        НВ — продолжаются
-                                    </option>
+                                    <option value="open">НВ — по состоянию записи</option>
                                     <option value="closed">
                                         Завершены
                                     </option>
@@ -221,7 +242,12 @@
                                 </label>
                                 <input id="filter-search" type="search" maxlength="100" placeholder="Адрес БС или PW/NTT">
                             </div>
-                        </div>
+                        <div>
+<label for="filter-source">Происхождение записей</label><select id="filter-source"><option value="all">Все записи</option>
+<option value="historical">Только архивные</option>
+<option value="live">Только оперативные</option></select>
+</div>
+</div>
                         <div class="filter-actions">
                             <button type="submit" class="button button-dark">
                                 Показать события
@@ -232,9 +258,12 @@
                             <span class="small muted">
                                 Фильтры применяются к таблице, сводке и CSV.
                             </span>
-                        </div>
-                    </form>
-                    <section class="panel table-panel" aria-labelledby="journal-heading">
+                        <button type="button" id="report-data-period" class="button button-quiet">Период всех данных</button>
+</div>
+                    <p class="small muted filter-time-note">Границы отбора — календарные. Архивные даты сохраняются без перевода часового пояса, если пояс источника не указан. Они не сравниваются с текущим UTC как единая временная шкала.</p>
+</form>
+                    </div>
+<section class="panel table-panel" aria-labelledby="journal-heading">
                         <div class="table-heading">
                             <div>
                                 <h2 id="journal-heading">
@@ -265,9 +294,7 @@
                                         <th>
                                             Тип / сеть
                                         </th>
-                                        <th>
-                                            Начало UTC
-                                        </th>
+                                        <th>Начало / время записи</th>
                                         <th>
                                             Состояние
                                         </th>
@@ -314,7 +341,8 @@
                             ← В журнал
                         </button>
                     </div>
-                    <form id="accident-form">
+                    <div id="editor-source" class="archive-banner" role="note" hidden></div>
+<form id="accident-form">
                         <div id="editor-errors" class="message message-error" role="alert" hidden>
                         </div>
                         <section class="panel">
@@ -326,10 +354,8 @@
                             </h2>
                             <div class="form-grid">
                                 <div class="wide">
-                                    <label for="pw">
-                                        1. PW/NTT — ссылка в CRM
-                                    </label>
-                                    <input id="pw" name="pw" type="url" maxlength="450" placeholder="https://crm.example/incident/123">
+                                    <label for="pw">1. PW/NTT — номер обращения или ссылка</label>
+                                    <input id="pw" name="pw" type="text" maxlength="450" placeholder="Номер обращения или ссылка в CRM">
                                 </div>
                                 <div>
                                     <label for="direction">
@@ -342,25 +368,14 @@
                                     <label for="center">
                                         3. Технический центр
                                     </label>
-                                    <select id="center" name="center" required>
+                                    <select id="center" name="center">
                                     </select>
                                 </div>
                                 <div>
-                                    <label for="category">
-                                        4. Категория
-                                    </label>
-                                    <select id="category" name="category">
-                                        <option>
-                                            1
-                                        </option>
-                                        <option>
-                                            2
-                                        </option>
-                                        <option>
-                                            3
-                                        </option>
-                                    </select>
-                                </div>
+                                    <label for="category">4. Исходная категория</label>
+                                    <select id="category" name="categoryCode"><option value="">Не указана / не сопоставлена</option></select>
+                                <p class="field-help" id="category-help">Исходный код сохраняется. Соответствие категориям 1–3 не угадывается.</p>
+</div>
                                 <div>
                                     <label for="networkType">
                                         5. Тип сети
@@ -379,8 +394,9 @@
                                     <label for="stationCount">
                                         7. Количество БС
                                     </label>
-                                    <input id="stationCount" name="stationCount" type="number" min="1" max="10000" value="1" required>
-                                    <label class="checkbox-label">
+                                    <input id="stationCount" name="stationCount" type="number" min="1" max="10000" value="1" placeholder="Пусто — количество неизвестно">
+                                    <p class="field-help">Оставьте пустым, если число БС в источнике не указано.</p>
+<label class="checkbox-label">
                                         <input id="isSector" name="isSector" type="checkbox">
                                         С — отдельный сектор
                                     </label>
@@ -389,8 +405,8 @@
                                     <label for="equipment">
                                         8. Тип оборудования
                                     </label>
-                                    <input id="equipment" name="equipment" maxlength="450">
-                                </div>
+                                    <textarea id="equipment" name="equipment" maxlength="450" rows="3"></textarea>
+</div>
                                 <div>
                                     <label for="alarmType">
                                         9. Тип аварии
@@ -419,53 +435,45 @@
                                     <label for="beginTime">
                                         11. Начало UTC
                                     </label>
-                                    <input id="beginTime" name="beginTime" type="datetime-local" step="1" required>
+                                    <input id="beginTime" name="beginTime" type="datetime-local" step="0.001" required>
                                 </div>
                                 <div>
                                     <label for="endTime">
                                         12. Окончание UTC / пусто = НВ
                                     </label>
-                                    <input id="endTime" name="endTime" type="datetime-local" step="1">
+                                    <input id="endTime" name="endTime" type="datetime-local" step="0.001">
                                 </div>
                                 <div>
                                     <label for="batterySeconds">
                                         13. Работа от АКБ
                                     </label>
-                                    <input id="batterySeconds" name="batterySeconds" value="00:00:00" placeholder="ЧЧ:ММ:СС" required>
+                                    <input id="batterySeconds" name="batterySeconds" placeholder="ЧЧ:ММ:СС или пусто — неизвестно">
                                 </div>
                                 <div>
                                     <label for="generatorSeconds">
                                         14. Работа от генератора
                                     </label>
-                                    <input id="generatorSeconds" name="generatorSeconds" value="00:00:00" placeholder="ЧЧ:ММ:СС" required>
+                                    <input id="generatorSeconds" name="generatorSeconds" placeholder="ЧЧ:ММ:СС или пусто — неизвестно">
                                 </div>
                                 <div class="calculated">
                                     <span>
                                         15. Длительность аварии
                                     </span>
-                                    <strong id="calculated-duration">
-                                        00:00:00
-                                    </strong>
-                                    <small>
-                                        Окончание − начало. Для НВ — текущее серверное время − начало.
-                                    </small>
+                                    <strong id="calculated-duration">Не указано</strong>
+                                    <small>Для архивной НВ — до даты среза. Без даты среза значение неизвестно.</small>
                                 </div>
                                 <div>
                                     <label for="downtimeSeconds">
                                         16. Перерыв связи одной БС
                                     </label>
-                                    <input id="downtimeSeconds" name="downtimeSeconds" value="00:00:00" placeholder="ЧЧ:ММ:СС" required>
+                                    <input id="downtimeSeconds" name="downtimeSeconds" placeholder="ЧЧ:ММ:СС или пусто — неизвестно">
                                 </div>
                                 <div class="calculated">
                                     <span>
                                         17. Общий простой БС
                                     </span>
-                                    <strong id="calculated-total">
-                                        00:00:00
-                                    </strong>
-                                    <small>
-                                        Перерыв × количество БС. Для отдельного сектора не определён.
-                                    </small>
+                                    <strong id="calculated-total">Не указано</strong>
+                                    <small>Перерыв × количество БС. Не вычисляется для сектора или неизвестных исходных значений.</small>
                                 </div>
                             </div>
                         </section>
@@ -655,9 +663,7 @@
         </div>
         <footer>
             МОТИВ / Журнал работы сети
-            <span>
-                Все даты и время — UTC · HTML + CSS + JavaScript + C# REST API
-            </span>
+            <span>Оперативные и архивные события · HTML + CSS + JavaScript + C# REST API</span>
         </footer>
     </body>
 </html>

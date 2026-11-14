@@ -5,12 +5,14 @@
 
     var state = {
         token: null, user: null, expiresAt: null, options: null,
-        page: 'reports', reportPage: 1, auditPage: 1,
-        reportSequence: 0, userSequence: 0, auditSequence: 0, detailSequence: 0,
+        page: 'dashboard', reportPage: 1, auditPage: 1,
+        dashboardSequence: 0, reportSequence: 0, userSequence: 0, auditSequence: 0, detailSequence: 0,
         filters: null, editingId: null, editingVersion: 0,
-        dirty: false, serverOffset: 0, modalItem: null, previousFocus: null
+        dirty: false, serverOffset: 0, editingSource: null, editingTimeBasis: 'utc', modalItem: null, previousFocus: null
     };
-    var maximumSeconds = 3020399; // MariaDB TIME: 838:59:59.
+    // Длительности хранятся в DECIMAL(20,3), а не в ограниченном типе TIME.
+    // Для очень больших чисел интерфейс проверяет предел точности JavaScript.
+    var maximumSeconds = Number.MAX_SAFE_INTEGER;
     var roleNames = { admin: 'Администратор', duty: 'Дежурный', engineer: 'Инженер' };
 
     function byId(id) { return document.getElementById(id); }
@@ -54,22 +56,51 @@
     }
     function serverNow() { return Date.now() + state.serverOffset; }
     function formatSeconds(seconds) {
-        if (seconds === null || seconds === undefined) return 'Не определён для сектора';
-        seconds = Math.max(0, Math.floor(Number(seconds)));
+        if (seconds === null || seconds === undefined) return 'Не указано';
+        var milliseconds = Math.max(0, Math.round(Number(seconds) * 1000));
+        var whole = Math.floor(milliseconds / 1000);
         function pad(value) { return value < 10 ? '0' + value : String(value); }
-        return pad(Math.floor(seconds / 3600)) + ':' + pad(Math.floor(seconds / 60) % 60) + ':' + pad(seconds % 60);
+        var result = pad(Math.floor(whole / 3600)) + ':' + pad(Math.floor(whole / 60) % 60) + ':' + pad(whole % 60);
+        var fraction = milliseconds % 1000;
+        return result + (fraction ? '.' + ('00' + fraction).slice(-3).replace(/0+$/, '') : '');
     }
     function parseSeconds(text, name) {
-        if (!/^\d{1,3}:\d{2}:\d{2}$/.test(text)) throw new Error(name + ': используйте ЧЧ:ММ:СС.');
+        text = text.trim();
+        if (!text) return null;
+        if (!/^\d{1,14}:\d{2}:\d{2}(?:\.\d{1,3})?$/.test(text)) throw new Error(name + ': используйте ЧЧ:ММ:СС или оставьте поле пустым, если значение неизвестно. Часы могут быть больше 838.');
         var parts = text.split(':').map(Number);
         var result = parts[0] * 3600 + parts[1] * 60 + parts[2];
-        if (parts[1] > 59 || parts[2] > 59 || result > maximumSeconds) throw new Error(name + ': максимум 838:59:59.');
+        if (parts[1] > 59 || parts[2] >= 60) throw new Error(name + ': минуты и секунды должны быть меньше 60.');
+        if (result > maximumSeconds || !Number.isSafeInteger(Math.round(result * 1000))) throw new Error(name + ': значение слишком велико для точного расчёта в браузере. Требуется отдельная проверка числа без потери точности.');
         return result;
     }
+    function isWallTime(value) { return value && /^\d{4}-\d{2}-\d{2}T/.test(value) && !/(?:Z|[+-]\d{2}:\d{2})$/i.test(value); }
     function utcInput(value, seconds) {
+        if (isWallTime(value)) return value.slice(0, seconds ? 23 : 16);
         var date = value ? new Date(value) : new Date(serverNow());
-        return isNaN(date.getTime()) ? '' : date.toISOString().slice(0, seconds ? 19 : 16);
+        return isNaN(date.getTime()) ? '' : date.toISOString().slice(0, seconds ? 23 : 16);
     }
+    function itemBegin(item) { return item.beginTimeLocal || item.beginTime; }
+    function itemEnd(item) { return item.endTimeLocal || item.endTime; }
+    function isHistorical(item) { return Boolean(item.source && item.source.isHistorical); }
+    function categoryText(item) {
+        var code = item.categoryCode;
+        if (code === null || code === undefined || code === '') return item.category === null ? 'Не указана' : 'Категория ' + item.category;
+        return String(code) + (item.needsCategoryMapping || item.category === null ? ' · без соответствия 1–3' : ' · категория ' + item.category);
+    }
+    function totalText(item) {
+        if (item.isSector) return 'Не определён для сектора';
+        return formatSeconds(item.totalDowntimeSeconds);
+    }
+    function durationText(item) {
+        if (item.durationSeconds === null && isHistorical(item) && !itemEnd(item)) return 'Нет даты среза';
+        return formatSeconds(item.durationSeconds);
+    }
+    function timeBasisText(item) {
+        if (item.timeBasis === 'source_local') return 'Время источника, пояс ' + (item.source && item.source.timeZone ? item.source.timeZone : 'не указан');
+        return 'UTC';
+    }
+
     function utcValue(id, optional) {
         var text = byId(id).value;
         if (!text && optional) return null;
@@ -79,9 +110,12 @@
     }
     function dateText(value) {
         if (!value) return 'НВ';
+        // Неизвестный пояс источника нельзя незаметно подменять поясом браузера или UTC.
+        if (isWallTime(value)) return value.replace('T', ' ').slice(0, 23).replace(/\.000$/, '');
         var date = new Date(value);
         return isNaN(date.getTime()) ? String(value) : date.toISOString().slice(0, 19).replace('T', ' ');
     }
+
     function option(select, value, text, selected) {
         var item = node('option', text);
         item.value = value;
@@ -129,6 +163,7 @@
         state.token = null;
         state.user = null;
         state.reportSequence += 1;
+        state.dashboardSequence += 1;
         state.userSequence += 1;
         state.auditSequence += 1;
         state.detailSequence += 1;
@@ -145,10 +180,10 @@
     }
     async function changePage(page, force) {
         if (!force && state.page === 'editor' && page !== 'editor' && !discardAllowed()) return;
-        if (page !== 'reports' && page !== 'editor' && !state.options.permissions.canManageUsers) return;
+        if (page !== 'reports' && page !== 'dashboard' && page !== 'editor' && !state.options.permissions.canManageUsers) return;
         if (page === 'editor' && !state.options.permissions.canWrite) return;
         state.page = page;
-        ['reports', 'editor', 'users', 'audit'].forEach(function (name) { byId(name + '-page').hidden = name !== page; });
+        ['dashboard', 'reports', 'editor', 'users', 'audit'].forEach(function (name) { byId(name + '-page').hidden = name !== page; });
         Array.prototype.forEach.call(document.querySelectorAll('[data-page]'), function (button) {
             var active = button.getAttribute('data-page') === page;
             button.classList.toggle('active', active);
@@ -156,6 +191,8 @@
         });
         showMessage('notice', '');
         if (page !== 'editor') state.dirty = false;
+        if (page === 'dashboard' || page === 'reports') byId(page === 'dashboard' ? 'dashboard-filters-slot' : 'report-filters-slot').appendChild(byId('filter-form'));
+        if (page === 'dashboard') await loadDashboard();
         if (page === 'reports') await loadReport();
         if (page === 'users') await loadUsers();
         if (page === 'audit') await loadAudit();
@@ -192,7 +229,7 @@
                 setupOptions();
                 if (!state.filters) resetFilters();
                 if (state.dirty && state.page === 'editor' && permissions.canWrite) await changePage('editor', true);
-                else await changePage('reports', true);
+                else await changePage('dashboard', true);
             } catch (error) {
                 state.token = null;
                 byId('login-screen').hidden = false;
@@ -206,34 +243,50 @@
         var values = state.options;
         [['direction', values.directions], ['center', values.centers], ['networkType', values.networkTypes], ['alarmType', values.alarmTypes]].forEach(function (pair) {
             var existing = byId(pair[0]).value;
-            fillSelect(pair[0], pair[1]);
+            fillSelect(pair[0], pair[1], pair[0] === 'center' ? 'ТЦ не указан' : null);
             if (pair[1].indexOf(existing) !== -1) byId(pair[0]).value = existing;
         });
         fillSelect('filter-direction', values.directions, 'Все направления');
         fillSelect('filter-center', values.centers, 'Все ТЦ');
         fillSelect('filter-network', values.networkTypes, 'Все типы сети');
+        var selected = byId('category').value;
+        empty(byId('category')); empty(byId('filter-category'));
+        option(byId('category'), '', 'Не указана', !selected);
+        option(byId('filter-category'), '', 'Все исходные категории', true);
+        (values.categories || []).forEach(function (category) {
+            var label = category.label || category.code;
+            if (category.mappedCategory === null || category.mappedCategory === undefined) label += ' · без соответствия 1–3';
+            option(byId('category'), category.code, label, category.code === selected);
+            option(byId('filter-category'), category.code, label, false);
+        });
         if (state.filters) {
             byId('filter-direction').value = state.filters.direction || '';
             byId('filter-center').value = state.filters.center || '';
             byId('filter-network').value = state.filters.networkType || '';
+            byId('filter-category').value = state.filters.categoryCode || '';
         }
+        byId('data-period').disabled = !values.dataRange || !values.dataRange.from || !values.dataRange.to;
+        byId('report-data-period').disabled = byId('data-period').disabled;
     }
     function resetFilters() {
+        var range = state.options.dataRange;
         var end = new Date(serverNow());
         end.setUTCHours(0, 0, 0, 0);
         end.setUTCDate(end.getUTCDate() + 1);
         var start = new Date(end.getTime() - 7 * 24 * 3600 * 1000);
-        byId('filter-from').value = utcInput(start.toISOString());
-        byId('filter-to').value = utcInput(end.toISOString());
+        byId('filter-from').value = range && range.from ? utcInput(range.from) : utcInput(start.toISOString());
+        byId('filter-to').value = range && range.to ? utcInput(range.to) : utcInput(end.toISOString());
         ['filter-direction', 'filter-center', 'filter-category', 'filter-network', 'filter-search'].forEach(function (id) { byId(id).value = ''; });
         byId('filter-status').value = 'all';
+        byId('filter-source').value = 'all';
         state.filters = readFilters();
         state.reportPage = 1;
     }
+
     function readFilters() {
         var result = { from: utcValue('filter-from'), to: utcValue('filter-to'), status: byId('filter-status').value };
         if (Date.parse(result.from) >= Date.parse(result.to)) throw new Error('Начало периода должно быть раньше конца.');
-        [['direction', 'filter-direction'], ['center', 'filter-center'], ['category', 'filter-category'], ['networkType', 'filter-network'], ['search', 'filter-search']].forEach(function (pair) {
+        [['direction', 'filter-direction'], ['center', 'filter-center'], ['categoryCode', 'filter-category'], ['networkType', 'filter-network'], ['search', 'filter-search'], ['sourceScope', 'filter-source']].forEach(function (pair) {
             var value = byId(pair[1]).value.trim();
             if (value) result[pair[0]] = value;
         });
@@ -271,22 +324,23 @@
             byId('stat-total').textContent = summary.total;
             byId('stat-open').textContent = summary.open;
             byId('stat-closed').textContent = summary.closed;
-            byId('stat-category').textContent = summary.categoryOne;
+            byId('stat-category').textContent = summary.unmappedCategories === undefined ? '—' : summary.unmappedCategories;
             byId('table-count').textContent = result.total;
             byId('report-state').textContent = 'Обновлено: ' + dateText(result.serverTimeUtc) + ' UTC';
             var body = byId('accident-rows');
             empty(body);
             result.items.forEach(function (item) {
                 var row = node('tr');
-                addCell(row, '#' + item.id, 'Категория ' + item.category);
-                addCell(row, item.direction, item.center);
+                var categoryCell = addCell(row, '#' + item.id, categoryText(item));
+                if (item.needsCategoryMapping) categoryCell.className = 'category-unmapped';
+                addCell(row, item.direction, item.center || 'ТЦ не указан');
                 addCell(row, item.serviceElement, item.description);
-                addCell(row, item.alarmType, item.networkType + ' · БС: ' + (item.isSector ? 'С' : item.stationCount));
-                addCell(row, dateText(item.beginTime).slice(0, 10), dateText(item.beginTime).slice(11));
+                addCell(row, item.alarmType, item.networkType + ' · БС: ' + (item.isSector ? 'С' : item.stationCount === null ? 'неизвестно' : item.stationCount));
+                addCell(row, dateText(itemBegin(item)).slice(0, 10), dateText(itemBegin(item)).slice(11) + ' · ' + timeBasisText(item));
                 var status = node('td');
-                status.appendChild(node('span', item.endTime ? 'Завершена' : '● НВ', 'badge' + (item.endTime ? '' : ' badge-open')));
+                status.appendChild(node('span', itemEnd(item) ? 'Завершена' : isHistorical(item) ? 'НВ · архив' : '● НВ · оперативная', 'badge' + (itemEnd(item) ? '' : isHistorical(item) ? ' badge-archive' : ' badge-open')));
                 row.appendChild(status);
-                addCell(row, formatSeconds(item.durationSeconds), null, 'mono');
+                addCell(row, durationText(item), null, 'mono');
                 var actions = node('td');
                 actions.appendChild(actionButton('Открыть →', 'button-quiet', function () { openDetails(item.id); }));
                 row.appendChild(actions);
@@ -323,14 +377,17 @@
         byId('accident-form').reset();
         state.editingId = null;
         state.editingVersion = 0;
+        state.editingSource = null;
+        state.editingTimeBasis = 'utc';
+        renderEditorSource();
         byId('editor-title').textContent = 'Регистрация аварии';
         byId('editor-eyebrow').textContent = 'АВАРИИ / НОВАЯ ЗАПИСЬ';
         byId('beginTime').value = utcInput(null, true);
         byId('endTime').value = '';
         byId('stationCount').value = '1';
         byId('stationCount').disabled = false;
-        byId('stationCount').required = true;
-        ['batterySeconds', 'generatorSeconds', 'downtimeSeconds'].forEach(function (id) { byId(id).value = '00:00:00'; });
+        byId('stationCount').required = false;
+        ['batterySeconds', 'generatorSeconds', 'downtimeSeconds'].forEach(function (id) { byId(id).value = ''; });
         showMessage('editor-errors', '');
         state.dirty = false;
         changePage('editor', true);
@@ -340,38 +397,70 @@
     function readAccident() {
         var result = {};
         ['pw', 'direction', 'center', 'networkType', 'serviceElement', 'equipment', 'alarmType', 'description', 'notified', 'notes'].forEach(function (id) { result[id] = byId(id).value.trim(); });
-        result.category = Number(byId('category').value);
+        result.categoryCode = byId('category').value || null;
+        var category = (state.options.categories || []).filter(function (item) { return item.code === result.categoryCode; })[0];
+        result.category = category && category.mappedCategory !== undefined ? category.mappedCategory : null;
         result.isSector = byId('isSector').checked;
-        result.stationCount = result.isSector ? null : Number(byId('stationCount').value);
-        result.beginTime = utcValue('beginTime');
-        result.endTime = utcValue('endTime', true);
+        result.stationCount = result.isSector || !byId('stationCount').value.trim() ? null : Number(byId('stationCount').value);
+        result.timeBasis = state.editingTimeBasis;
+        if (!byId('beginTime').value) throw new Error('Укажите начало события.');
+        if (state.editingTimeBasis === 'source_local') {
+            result.beginTimeLocal = byId('beginTime').value;
+            result.endTimeLocal = byId('endTime').value || null;
+            result.beginTime = null; result.endTime = null;
+        } else {
+            result.beginTime = utcValue('beginTime');
+            result.endTime = utcValue('endTime', true);
+            result.beginTimeLocal = null; result.endTimeLocal = null;
+        }
         result.batterySeconds = parseSeconds(byId('batterySeconds').value, 'АКБ');
         result.generatorSeconds = parseSeconds(byId('generatorSeconds').value, 'Генератор');
         result.downtimeSeconds = parseSeconds(byId('downtimeSeconds').value, 'Перерыв связи');
-        if (result.endTime && Date.parse(result.endTime) < Date.parse(result.beginTime)) throw new Error('Окончание не может быть раньше начала.');
-        if (!result.isSector && result.downtimeSeconds * result.stationCount > maximumSeconds) throw new Error('Общий простой превышает 838:59:59 — предел поля TIME. Разделите запись или согласуйте другой способ учёта.');
+        if (byId('endTime').value && byId('endTime').value < byId('beginTime').value) throw new Error('Окончание не может быть раньше начала.');
+        if (!result.isSector && result.downtimeSeconds !== null && result.stationCount !== null && !Number.isSafeInteger(Math.round(result.downtimeSeconds * result.stationCount * 1000))) throw new Error('Общий простой слишком велик для точного расчёта в браузере. Требуется отдельная проверка числа без потери точности.');
         if (state.editingId !== null) result.version = state.editingVersion;
         return result;
+    }
+    function renderEditorSource() {
+        var box = byId('editor-source');
+        var source = state.editingSource;
+        box.hidden = !source;
+        if (source) {
+            box.textContent = 'Архивная запись · лист «' + (source.sheet || 'не указан') + '», строка ' + (source.row || 'не указана') + '. ' +
+                (state.editingTimeBasis === 'source_local' ? 'Время источника сохранено без перевода. Часовой пояс: ' + (source.timeZone || 'не указан') + '. ' : 'Время UTC. ') +
+                'НВ относится к состоянию на дату источника. ' +
+                (source.snapshotAtLocal || source.snapshotAt ? 'Срез: ' + dateText(source.snapshotAtLocal || source.snapshotAt) + '.' : 'Дата среза неизвестна — длительность открытого события не рассчитывается.');
+        }
+        document.querySelector('label[for="beginTime"]').textContent = state.editingTimeBasis === 'source_local' ? '11. Начало — время источника' : '11. Начало UTC';
+        document.querySelector('label[for="endTime"]').textContent = state.editingTimeBasis === 'source_local' ? '12. Окончание — время источника / НВ' : '12. Окончание UTC / пусто = НВ';
+        document.querySelector('#editor-page .page-heading .muted').textContent = state.editingTimeBasis === 'source_local' ? 'Сохраните календарное время исходной строки. Часовой пояс не указан и не переводится в UTC.' : 'Для оперативной записи укажите время UTC. Пустое окончание означает НВ.';
     }
     function updateCalculations() {
         if (state.page !== 'editor') return;
         var sector = byId('isSector').checked;
         byId('stationCount').disabled = sector;
-        byId('stationCount').required = !sector;
+        byId('stationCount').required = false;
+        // Добавление Z здесь — только способ вычесть две календарные строки,
+        // а не утверждение, что неизвестный пояс источника является UTC.
         var start = Date.parse(byId('beginTime').value + 'Z');
-        var finish = byId('endTime').value ? Date.parse(byId('endTime').value + 'Z') : serverNow();
-        byId('calculated-duration').textContent = isNaN(start) || isNaN(finish) || finish < start ? 'Проверьте даты' : formatSeconds((finish - start) / 1000);
+        var endText = byId('endTime').value;
+        var historical = state.editingSource && state.editingSource.isHistorical;
+        var snapshot = historical ? state.editingSource.snapshotAtLocal || state.editingSource.snapshotAt : null;
+        var finish = endText ? Date.parse(endText + 'Z') : historical ? snapshot ? Date.parse(snapshot + (isWallTime(snapshot) ? 'Z' : '')) : NaN : serverNow();
+        byId('calculated-duration').textContent = historical && !endText && !snapshot ? 'Нет даты среза' : isNaN(start) || isNaN(finish) || finish < start ? 'Проверьте даты' : formatSeconds((finish - start) / 1000);
         if (sector) byId('calculated-total').textContent = 'Не определён для сектора';
         else {
             try {
                 var down = parseSeconds(byId('downtimeSeconds').value, 'Перерыв');
-                var count = Number(byId('stationCount').value);
-                if (count < 1 || count > 10000 || Math.floor(count) !== count) throw new Error('Количество');
-                var total = down * count;
-                byId('calculated-total').textContent = total > maximumSeconds ? 'Превышен предел TIME' : formatSeconds(total);
+                var countText = byId('stationCount').value.trim();
+                var count = countText ? Number(countText) : null;
+                if (count !== null && (count < 1 || count > 10000 || Math.floor(count) !== count)) throw new Error('Количество');
+                if (count === null || down === null) byId('calculated-total').textContent = 'Недостаточно данных';
+                else byId('calculated-total').textContent = !Number.isSafeInteger(Math.round(down * count * 1000)) ? 'Превышена точность браузера' : formatSeconds(down * count);
             } catch (_) { byId('calculated-total').textContent = 'Проверьте количество и время'; }
         }
     }
+
     async function saveAccident(event) {
         event.preventDefault();
         var button = event.target.querySelector('button[type=submit]');
@@ -397,12 +486,18 @@
             synchronizeClock(item.serverTimeUtc);
             state.editingId = item.id;
             state.editingVersion = item.version;
-            ['pw', 'direction', 'center', 'category', 'networkType', 'serviceElement', 'equipment', 'alarmType', 'description', 'notified', 'notes'].forEach(function (key) { byId(key).value = item[key] === null ? '' : item[key]; });
+            state.editingSource = item.source || null;
+            state.editingTimeBasis = item.timeBasis || 'utc';
+            renderEditorSource();
+            var sourceCode = item.categoryCode === null || item.categoryCode === undefined ? '' : String(item.categoryCode);
+            if (!Array.prototype.some.call(byId('category').options, function (entry) { return entry.value === sourceCode; })) option(byId('category'), sourceCode, sourceCode + ' · исходный код', false);
+            byId('category').value = sourceCode;
+            ['pw', 'direction', 'center', 'networkType', 'serviceElement', 'equipment', 'alarmType', 'description', 'notified', 'notes'].forEach(function (key) { byId(key).value = item[key] === null ? '' : item[key]; });
             byId('isSector').checked = item.isSector;
-            byId('stationCount').value = item.stationCount === null ? '1' : item.stationCount;
-            byId('beginTime').value = utcInput(item.beginTime, true);
-            byId('endTime').value = item.endTime ? utcInput(item.endTime, true) : '';
-            ['batterySeconds', 'generatorSeconds', 'downtimeSeconds'].forEach(function (key) { byId(key).value = formatSeconds(item[key]); });
+            byId('stationCount').value = item.stationCount === null ? '' : item.stationCount;
+            byId('beginTime').value = utcInput(itemBegin(item), true);
+            byId('endTime').value = itemEnd(item) ? utcInput(itemEnd(item), true) : '';
+            ['batterySeconds', 'generatorSeconds', 'downtimeSeconds'].forEach(function (key) { byId(key).value = item[key] === null || item[key] === undefined ? '' : formatSeconds(item[key]); });
             byId('editor-title').textContent = 'Редактирование аварии #' + item.id;
             byId('editor-eyebrow').textContent = 'АВАРИИ / #' + item.id + ' / ВЕРСИЯ ' + item.version;
             showMessage('editor-errors', '');
@@ -424,15 +519,20 @@
             var details = byId('detail-fields');
             empty(details);
             var fields = [
-                ['1. PW/NTT', item.pw], ['2. Направление', item.direction], ['3. ТЦ', item.center], ['4. Категория', item.category],
-                ['5. Тип сети', item.networkType], ['6. Сетевой элемент', item.serviceElement], ['7. Количество БС', item.isSector ? 'С — отдельный сектор' : item.stationCount],
+                ['1. PW/NTT', item.pw], ['2. Направление', item.direction], ['3. ТЦ', item.center], ['4. Исходная категория', categoryText(item)],
+                ['5. Тип сети', item.networkType], ['6. Сетевой элемент', item.serviceElement], ['7. Количество БС', item.isSector ? 'С — отдельный сектор' : item.stationCount === null ? 'Не указано' : item.stationCount],
                 ['8. Оборудование', item.equipment], ['9. Тип аварии', item.alarmType], ['10. Описание', item.description],
-                ['11. Начало UTC', dateText(item.beginTime)], ['12. Окончание UTC', dateText(item.endTime)],
+                ['11. Начало · ' + timeBasisText(item), dateText(itemBegin(item))], ['12. Окончание · ' + timeBasisText(item), dateText(itemEnd(item))],
                 ['13. АКБ', formatSeconds(item.batterySeconds)], ['14. Генератор', formatSeconds(item.generatorSeconds)],
-                ['15. Длительность', formatSeconds(item.durationSeconds)], ['16. Перерыв связи 1 БС', formatSeconds(item.downtimeSeconds)],
-                ['17. Общий простой', formatSeconds(item.totalDowntimeSeconds)], ['18. Кому сообщили', item.notified], ['19. Подробности', item.notes],
+                ['15. Длительность', durationText(item)], ['16. Перерыв связи 1 БС', formatSeconds(item.downtimeSeconds)],
+                ['17. Общий простой', totalText(item)], ['18. Кому сообщили', item.notified], ['19. Подробности', item.notes],
                 ['Создал', item.createdByName], ['Версия записи', item.version]
             ];
+            if (item.source) {
+                fields.push(['Происхождение', 'Архив · лист «' + (item.source.sheet || 'не указан') + '», строка ' + (item.source.row || 'не указана')]);
+                fields.push(['Срез источника', item.source.snapshotAtLocal || item.source.snapshotAt ? dateText(item.source.snapshotAtLocal || item.source.snapshotAt) : 'Дата среза неизвестна']);
+                fields.push(['Важно об НВ', 'Не закрыта на дату источника. Не означает, что авария продолжается сейчас.']);
+            }
             fields.forEach(function (pair) {
                 var group = node('div');
                 group.appendChild(node('dt', pair[0]));
@@ -542,6 +642,120 @@
         } catch (error) { if (sequence === state.auditSequence) showMessage('notice', errorText(error), true); }
     }
 
+    function loadCurrentData() {
+        return state.page === 'dashboard' ? loadDashboard() : loadReport();
+    }
+    function useDataPeriod() {
+        var range = state.options.dataRange;
+        if (!range || !range.from || !range.to) return;
+        byId('filter-from').value = utcInput(range.from, true);
+        byId('filter-to').value = utcInput(range.to, true);
+        try {
+            state.filters = readFilters();
+            state.reportPage = 1;
+            showMessage('notice', '');
+            loadCurrentData();
+        } catch (error) { showMessage('notice', errorText(error), true); }
+    }
+    function renderBars(id, entries, accent) {
+        var host = byId(id);
+        empty(host);
+        if (!entries || !entries.length) { host.appendChild(node('p', 'Нет событий в выбранной выборке.', 'empty-chart')); return; }
+        var maximum = Math.max.apply(null, entries.map(function (entry) { return Number(entry.count) || 0; }).concat([1]));
+        entries.forEach(function (entry) {
+            var row = node('div', null, 'bar-row');
+            var caption = node('div', null, 'bar-caption');
+            caption.appendChild(node('span', entry.label || 'Не указано'));
+            caption.appendChild(node('strong', entry.count));
+            var track = node('div', null, 'bar-track');
+            track.setAttribute('aria-hidden', 'true');
+            var fill = node('span', null, 'bar-fill' + (accent ? ' bar-fill-orange' : ''));
+            fill.style.width = Math.max(0, Number(entry.count) || 0) / maximum * 100 + '%';
+            track.appendChild(fill);
+            row.appendChild(caption); row.appendChild(track); host.appendChild(row);
+        });
+    }
+    function svgNode(tag, attributes, text) {
+        var element = document.createElementNS('http://www.w3.org/2000/svg', tag);
+        Object.keys(attributes || {}).forEach(function (key) { element.setAttribute(key, attributes[key]); });
+        if (text !== undefined) element.textContent = text;
+        return element;
+    }
+    function renderMonths(entries) {
+        var host = byId('month-chart');
+        empty(host);
+        if (!entries || !entries.length) { host.appendChild(node('p', 'Нет событий в выбранном периоде.', 'empty-chart')); return; }
+        var width = 860, height = 240, left = 48, right = 22, top = 25, bottom = 45;
+        var areaWidth = width - left - right, areaHeight = height - top - bottom;
+        var maximum = Math.max.apply(null, entries.map(function (entry) { return Number(entry.count) || 0; }).concat([1]));
+        var svg = svgNode('svg', { viewBox: '0 0 ' + width + ' ' + height, role: 'img', 'aria-labelledby': 'monthly-chart-title monthly-chart-description' });
+        svg.appendChild(svgNode('title', { id: 'monthly-chart-title' }, 'Количество событий по месяцам'));
+        svg.appendChild(svgNode('desc', { id: 'monthly-chart-description' }, entries.map(function (entry) { return entry.label + ': ' + entry.count; }).join('; ')));
+        for (var i = 0; i <= 3; i += 1) {
+            var y = top + areaHeight - areaHeight * i / 3;
+            svg.appendChild(svgNode('line', { x1: left, y1: y, x2: width - right, y2: y, 'class': 'chart-grid-line' }));
+            svg.appendChild(svgNode('text', { x: left - 12, y: y + 4, 'text-anchor': 'end', 'class': 'chart-axis-label' }, String(Math.round(maximum * i / 3))));
+        }
+        var column = areaWidth / entries.length;
+        entries.forEach(function (entry, index) {
+            var barWidth = Math.min(45, column * 0.58);
+            var x = left + column * index + (column - barWidth) / 2;
+            var barHeight = Math.max(0, Number(entry.count) || 0) / maximum * areaHeight;
+            var bar = svgNode('rect', { x: x, y: top + areaHeight - barHeight, width: barWidth, height: barHeight, rx: 3, 'class': 'month-bar' });
+            bar.appendChild(svgNode('title', {}, (entry.label || 'Месяц не указан') + ': ' + entry.count));
+            svg.appendChild(bar);
+            if (entries.length <= 18) svg.appendChild(svgNode('text', { x: x + barWidth / 2, y: top + areaHeight - barHeight - 8, 'text-anchor': 'middle', 'class': 'chart-value' }, String(entry.count)));
+            if (entries.length <= 12 || index % Math.ceil(entries.length / 10) === 0 || index === entries.length - 1) {
+                svg.appendChild(svgNode('text', { x: left + column * (index + 0.5), y: height - 15, 'text-anchor': 'middle', 'class': 'chart-axis-label' }, entry.label || '—'));
+            }
+        });
+        host.appendChild(svg);
+        var table = node('table', null, 'sr-only chart-data-table');
+        var caption = node('caption', 'Данные диаграммы: события по месяцам');
+        table.appendChild(caption);
+        var body = node('tbody');
+        entries.forEach(function (entry) { var row = node('tr'); row.appendChild(node('th', entry.label)); row.appendChild(node('td', entry.count)); body.appendChild(row); });
+        table.appendChild(body); host.appendChild(table);
+    }
+    async function loadDashboard() {
+        var sequence = ++state.dashboardSequence;
+        byId('dashboard-state').textContent = 'Обновляем обзор…';
+        try {
+            var result = await api('/accidents/dashboard' + filterQuery(false));
+            if (sequence !== state.dashboardSequence || !state.token) return;
+            var source = result.source || {};
+            var historical = result.historicalOpen === undefined ? 0 : result.historicalOpen;
+            var live = result.liveOpen === undefined ? result.open - historical : result.liveOpen;
+            byId('dash-total').textContent = result.total;
+            byId('dash-historical').textContent = historical;
+            byId('dash-live').textContent = live;
+            byId('dash-closed').textContent = result.closed;
+            byId('dash-unmapped').textContent = result.unmappedCategories;
+            byId('dash-downtime').textContent = formatSeconds(result.knownTotalDowntimeSeconds);
+            byId('dash-unknown').textContent = 'Неизвестный перерыв: ' + result.unknownDowntime + ' · неизвестное число БС: ' + result.unknownStationCount + ' · исключено из итога (включая секторы): ' + result.excludedDowntimeRows;
+            var sourceRows = source.sourceRows === undefined ? source.rows || 0 : source.sourceRows;
+            var eventRows = source.eventRows === undefined ? source.rows || 0 : source.eventRows;
+            var batchCount = Array.isArray(source.batches) ? source.batches.length : source.batches || 0;
+            byId('source-summary').textContent = sourceRows ? eventRows + ' событий · ' + sourceRows + ' строк источника · загрузок: ' + batchCount : 'Оперативный журнал — данные введены вручную';
+            byId('source-period').textContent = source.minBegin || source.maxBegin ? 'Период источника: ' + dateText(source.minBegin) + ' — ' + dateText(source.maxBegin) : 'Период источника не указан';
+            byId('archive-banner').hidden = !sourceRows && !historical;
+            var nonEventRows = Math.max(0, sourceRows - eventRows);
+            byId('source-quality').textContent = (nonEventRows ? nonEventRows + ' исходных строк не стали отдельными событиями: заголовки, сводные или отложенные строки сохраняются при разборе источника. ' : '') +
+                'Неизвестный часовой пояс не угадывается. Исходные категории без соответствия 1–3 сохранены: ' + (source.unmappedRows === undefined ? result.unmappedCategories : source.unmappedRows) + '.';
+            renderBars('direction-chart', result.byDirection, false);
+            renderBars('alarm-chart', result.byAlarmType, true);
+            renderMonths(result.byMonth);
+            byId('dashboard-state').textContent = 'Обзор по применённым фильтрам';
+        } catch (error) {
+            if (sequence !== state.dashboardSequence) return;
+            byId('dashboard-state').textContent = 'Не удалось обновить обзор';
+            showMessage('notice', errorText(error), true);
+        }
+    }
+
+    byId('data-period').addEventListener('click', useDataPeriod);
+    byId('report-data-period').addEventListener('click', useDataPeriod);
+    byId('dashboard-to-journal').addEventListener('click', function () { changePage('reports'); });
     // Подписки на события видны в одном месте — их легко проследить от кнопки до API.
     byId('login-form').addEventListener('submit', login);
     byId('logout').addEventListener('click', function () {
@@ -551,7 +765,7 @@
         byId('accident-form').reset();
         resetSession('Вы вышли из системы.');
     });
-    byId('brand').addEventListener('click', function (event) { event.preventDefault(); if (state.token) changePage('reports'); });
+    byId('brand').addEventListener('click', function (event) { event.preventDefault(); if (state.token) changePage('dashboard'); });
     Array.prototype.forEach.call(document.querySelectorAll('[data-page]'), function (button) {
         button.addEventListener('click', function () {
             var page = button.getAttribute('data-page');
@@ -565,11 +779,11 @@
     byId('accident-form').addEventListener('change', function () { state.dirty = true; updateCalculations(); });
     byId('filter-form').addEventListener('submit', function (event) {
         event.preventDefault();
-        try { state.filters = readFilters(); state.reportPage = 1; showMessage('notice', ''); loadReport(); }
+        try { state.filters = readFilters(); state.reportPage = 1; showMessage('notice', ''); loadCurrentData(); }
         catch (error) { showMessage('notice', errorText(error), true); }
     });
-    byId('filter-form').addEventListener('input', function () { byId('report-state').textContent = 'Фильтры изменены. Нажмите «Показать события». CSV пока использует предыдущие применённые фильтры.'; });
-    byId('reset-filters').addEventListener('click', function () { resetFilters(); loadReport(); });
+    byId('filter-form').addEventListener('input', function () { byId(state.page === 'dashboard' ? 'dashboard-state' : 'report-state').textContent = 'Фильтры изменены. Нажмите «Показать события». CSV и обзор пока используют предыдущую выборку.'; });
+    byId('reset-filters').addEventListener('click', function () { resetFilters(); loadCurrentData(); });
     byId('previous-page').addEventListener('click', function () { if (state.reportPage > 1) { state.reportPage -= 1; loadReport(); } });
     byId('next-page').addEventListener('click', function () { state.reportPage += 1; loadReport(); });
     byId('export').addEventListener('click', exportReport);
