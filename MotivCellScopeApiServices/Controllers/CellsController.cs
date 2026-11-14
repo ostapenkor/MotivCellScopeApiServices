@@ -7,7 +7,6 @@ namespace MotivCellScopeApiServices.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
-    [Authorize]
     public class CellsController : ControllerBase
     {
         // GET: api/<CellsController>

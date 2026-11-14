@@ -26,4 +26,10 @@ public partial class Incident
     public virtual Bt? Bts { get; set; }
 
     public virtual Region Region { get; set; } = null!;
+    public string? Pw { get; set; }
+
+    public DateTime? BeginTime { get; set; }
+    public DateTime? EndTime { get; set; }
+    public string? Lenght { get; set; }
+    public string? CommonProstoy { get; set; }
 }
