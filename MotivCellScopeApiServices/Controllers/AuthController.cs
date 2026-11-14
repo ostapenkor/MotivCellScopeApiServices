@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Identity.Data;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity.Data;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -56,14 +57,37 @@ namespace MotivCellScopeApiServices.Controllers
 
             return Ok(new
             {
-                token = token,
+                token,
                 expiresAt = expiresAt.ToString("yyyy-MM-ddTHH:mm:ssZ"),
                 username = user.Username,
                 role = user.Role 
             });
         }
 
+        // GET /api/auth/me
+        [HttpGet("me")]
+        [Authorize] // Разрешает доступ с валидным токеном для любой роли (engineer, operator, admin)
+        public IActionResult GetCurrentUser()
+        {
+            // Достаем данные пользователя из Claims расшифрованного JWT-токена
+            var userIdStr = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            var username = User.FindFirst(ClaimTypes.Name)?.Value;
+            var role = User.FindFirst(ClaimTypes.Role)?.Value;
 
+            // Если токен поврежден и в нем нет нужных полей
+            if (!uint.TryParse(userIdStr, out uint userId) || string.IsNullOrEmpty(username))
+            {
+                return Unauthorized(new { message = "Некорректные данные токена" });
+            }
+
+            // Возвращаем JSON строго в нужном формате
+            return Ok(new
+            {
+                userId,
+                username,
+                role
+            });
+        }
 
 
         private string GenerateJwtToken(User user, DateTime expires)
