@@ -159,13 +159,7 @@ namespace MotivCellScopeApiServices.Controllers
             });
         }
 
-        // Вспомогательный метод для корректного вывода интервалов > 24 часов (например, "48:00:00")
-        private string? FormatTimeSpan(TimeSpan? ts)
-        {
-            if (!ts.HasValue) return null;
-            return $"{(int)ts.Value.TotalHours:D2}:{ts.Value.Minutes:D2}:{ts.Value.Seconds:D2}";
-        }
-
+        
         // =========================================================================
         // 2.3. POST /api/incidents
         // =========================================================================
@@ -344,6 +338,222 @@ namespace MotivCellScopeApiServices.Controllers
         }
 
         // =========================================================================
+        // 2.4. PUT /api/incidents/{id}
+        // =========================================================================
+        [HttpPut("{id}")]
+        [Authorize(Roles = "operator,admin")] // Auth: только operator или admin (engineer получит 403 Forbidden)
+        public IActionResult UpdateIncident(ulong id, [FromBody] CreateIncidentRequest request)
+        {
+            // 1. Проверяем существование инцидента в базе
+            var existingIncident = _db.Incidents.FirstOrDefault(i => i.IncidentId == id);
+            if (existingIncident == null)
+            {
+                return NotFound(new { error = "not_found" });
+            }
+
+            // 2. Валидация полей (аналогично POST)
+            if (request.Pw != null && request.Pw.Length > 450)
+            {
+                return BadRequest(new { error = "validation_failed", field = "pw" });
+            }
+
+            var beginUtc = request.BeginTime.ToUniversalTime();
+            if (beginUtc > DateTime.UtcNow.AddMinutes(1))
+            {
+                return BadRequest(new { error = "validation_failed", field = "beginTime" });
+            }
+
+            DateTime? endUtc = request.EndTime?.ToUniversalTime();
+            if (endUtc.HasValue && endUtc.Value < beginUtc)
+            {
+                return BadRequest(new { error = "validation_failed", field = "endTime" });
+            }
+
+            var allowedCategories = new[] { "power", "transport", "hardware", "software", "planned", "client", "external", "other" };
+            var category = string.IsNullOrWhiteSpace(request.Category) ? "other" : request.Category.ToLower();
+            if (!allowedCategories.Contains(category))
+            {
+                return BadRequest(new { error = "validation_failed", field = "category" });
+            }
+
+            var allowedSeverities = new[] { "low", "medium", "high", "critical" };
+            var severity = string.IsNullOrWhiteSpace(request.Severity) ? "medium" : request.Severity.ToLower();
+            if (!allowedSeverities.Contains(severity))
+            {
+                return BadRequest(new { error = "validation_failed", field = "severity" });
+            }
+
+            TimeSpan? akbSpan = ParseTimeSpan(request.Akb);
+            if (request.Akb != null && !akbSpan.HasValue)
+                return BadRequest(new { error = "validation_failed", field = "akb" });
+
+            TimeSpan? dguSpan = ParseTimeSpan(request.Dgu);
+            if (request.Dgu != null && !dguSpan.HasValue)
+                return BadRequest(new { error = "validation_failed", field = "dgu" });
+
+            TimeSpan? prostoySpan = ParseTimeSpan(request.Prostoy);
+            if (request.Prostoy != null && !prostoySpan.HasValue)
+                return BadRequest(new { error = "validation_failed", field = "prostoy" });
+
+            // 3. Если задан networkElementId — подтягиваем актуальное full_name из network_elements
+            string? finalServElem = request.ServElem;
+            if (request.NetworkElementId.HasValue)
+            {
+                var netElement = _db.NetworkElements
+                    .AsNoTracking()
+                    .FirstOrDefault(ne => ne.Id == request.NetworkElementId.Value);
+
+                if (netElement == null)
+                {
+                    return BadRequest(new { error = "validation_failed", field = "networkElementId" });
+                }
+
+                if (!string.IsNullOrEmpty(netElement.FullName))
+                {
+                    finalServElem = netElement.FullName;
+                }
+            }
+
+            // 4. Пересчитываем lenght и commonProstoy в формате «X days, HH:MM:SS»
+            var effectiveEnd = endUtc ?? DateTime.UtcNow;
+            var duration = effectiveEnd - beginUtc;
+            if (duration < TimeSpan.Zero) duration = TimeSpan.Zero;
+
+            string formattedDuration = $"{duration.Days} days, {duration.Hours:D2}:{duration.Minutes:D2}:{duration.Seconds:D2}";
+
+            // 5. Обновляем поля сущности (CreatedByUserId и CreatedAt не трогаем)
+            existingIncident.Pw = request.Pw;
+            existingIncident.DirectionId = request.DirectionId;
+            existingIncident.TechCenterId = request.TechCenterId;
+            existingIncident.PriorityId = request.PriorityId;
+            existingIncident.NetworkTypeId = request.NetworkTypeId;
+            existingIncident.NetworkElementId = request.NetworkElementId;
+            existingIncident.ServElem = finalServElem;
+            existingIncident.NumbRbs = request.NumbRbs;
+            existingIncident.EquipmentTypeId = request.EquipmentTypeId;
+            existingIncident.AlarmTypeId = request.AlarmTypeId;
+            existingIncident.Descr = request.Descr;
+            existingIncident.BeginTime = beginUtc;
+            existingIncident.EndTime = endUtc;
+            existingIncident.Akb = akbSpan;
+            existingIncident.Dgu = dguSpan;
+            existingIncident.Lenght = formattedDuration;
+            existingIncident.Prostoy = prostoySpan;
+            existingIncident.CommonProstoy = formattedDuration;
+            existingIncident.AlarmWho = request.AlarmWho;
+            existingIncident.DescNotice = request.DescNotice;
+            existingIncident.AdminDistrict = request.AdminDistrict;
+            existingIncident.RegionId = request.RegionId;
+            existingIncident.Severity = severity;
+            existingIncident.Category = category;
+            existingIncident.UpdatedAt = DateTime.UtcNow;
+
+            _db.SaveChanges(); // EF Core выполнит UPDATE incidents SET ... WHERE incident_id = id
+
+            // 6. Пишем в audit_log
+            var userIdStr = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            uint? currentUserId = uint.TryParse(userIdStr, out uint uid) ? uid : null;
+            var currentUsername = User.FindFirst(ClaimTypes.Name)?.Value ?? "unknown";
+            var currentRole = User.FindFirst(ClaimTypes.Role)?.Value;
+
+            WriteIncidentAudit(currentUserId, currentUsername, currentRole, "update_incident", existingIncident.IncidentId);
+
+            // 7. Загружаем обновленный DTO через представление v_incidents_full и возвращаем 200 OK
+            var updatedItem = (from i in _db.Incidents.AsNoTracking()
+                               join v1 in _db.VIncidentsFulls.AsNoTracking() on i.IncidentId equals v1.IncidentId
+                               where i.IncidentId == id
+                               select new { Entity = i, View = v1 }).First();
+
+            var e = updatedItem.Entity;
+            var v = updatedItem.View;
+
+            return Ok(new
+            {
+                incidentId = e.IncidentId,
+                pw = e.Pw,
+                directionId = e.DirectionId,
+                directionCode = v.DirectionCode,
+                techCenterId = e.TechCenterId,
+                techCenterCode = v.TechCenterCode,
+                priorityId = e.PriorityId,
+                priorityCode = v.PriorityCode,
+                networkTypeId = e.NetworkTypeId,
+                networkTypeCode = v.NetworkTypeCode,
+                equipmentTypeId = e.EquipmentTypeId,
+                equipmentTypeCode = v.EquipmentTypeCode,
+                alarmTypeId = e.AlarmTypeId,
+                alarmTypeCode = v.AlarmTypeCode,
+                networkElementId = e.NetworkElementId,
+                networkElementName = v.NetworkElementName,
+                networkElementType = v.NetworkElementType,
+                servElem = e.ServElem,
+                numbRbs = e.NumbRbs,
+                descr = e.Descr,
+                beginTime = e.BeginTime.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                endTime = e.EndTime?.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                akb = FormatTimeSpan(e.Akb),
+                dgu = FormatTimeSpan(e.Dgu),
+                lenght = e.Lenght,
+                prostoy = FormatTimeSpan(e.Prostoy),
+                commonProstoy = e.CommonProstoy,
+                alarmWho = e.AlarmWho,
+                descNotice = e.DescNotice,
+                adminDistrict = e.AdminDistrict,
+                regionId = e.RegionId,
+                severity = e.Severity,
+                category = e.Category,
+                createdByUserId = e.CreatedByUserId,
+                createdAt = e.CreatedAt.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                updatedAt = e.UpdatedAt.ToString("yyyy-MM-ddTHH:mm:ssZ")
+            });
+        }
+
+        // =========================================================================
+        // 2.5. DELETE /api/incidents/{id}
+        // =========================================================================
+        [HttpDelete("{id}")]
+        [Authorize(Roles = "operator,admin")] // Auth: только operator или admin (engineer получит 403 Forbidden)
+        public IActionResult DeleteIncident(ulong id)
+        {
+            // 1. Проверяем существование инцидента
+            var incident = _db.Incidents.FirstOrDefault(i => i.IncidentId == id);
+            if (incident == null)
+            {
+                return NotFound(new { error = "not_found" });
+            }
+
+            // 2. Сбрасываем привязку в таблице anomalies, чтобы не сломать внешний ключ (fk_an_incident)
+            var linkedAnomalies = _db.Anomalies
+                .Where(a => a.ExplainedByIncident == id)
+                .ToList();
+
+            foreach (var anomaly in linkedAnomalies)
+            {
+                anomaly.ExplainedByIncident = null;
+                // Возвращаем статус аномалии в 'new', так как объясняющий инцидент удален
+                if (anomaly.Status == "explained")
+                {
+                    anomaly.Status = "new";
+                }
+            }
+
+            // 3. Удаляем сам инцидент и сохраняем изменения в одной транзакции EF Core
+            _db.Incidents.Remove(incident);
+            _db.SaveChanges();
+
+            // 4. Записываем событие в audit_log
+            var userIdStr = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            uint? currentUserId = uint.TryParse(userIdStr, out uint uid) ? uid : null;
+            var currentUsername = User.FindFirst(ClaimTypes.Name)?.Value ?? "unknown";
+            var currentRole = User.FindFirst(ClaimTypes.Role)?.Value;
+
+            WriteIncidentAudit(currentUserId, currentUsername, currentRole, "delete_incident", id);
+
+            // 5. Возвращаем 204 No Content с пустым телом
+            return NoContent();
+        }
+
+        // =========================================================================
         // Вспомогательные методы (добавьте в конец IncidentsController)
         // =========================================================================
 
@@ -391,6 +601,12 @@ namespace MotivCellScopeApiServices.Controllers
             {
                 // Не ломаем основной ответ при ошибке записи аудита
             }
+        }
+        // Вспомогательный метод для корректного вывода интервалов > 24 часов (например, "48:00:00")
+        private string? FormatTimeSpan(TimeSpan? ts)
+        {
+            if (!ts.HasValue) return null;
+            return $"{(int)ts.Value.TotalHours:D2}:{ts.Value.Minutes:D2}:{ts.Value.Seconds:D2}";
         }
 
     }
