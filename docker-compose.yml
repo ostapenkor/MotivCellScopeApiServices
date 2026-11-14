@@ -8,10 +8,10 @@ services:
     restart: always
     environment:
       # Говорим MariaDB читать пароли из секретных файлов в памяти (Рекомендация из видео)
-      MARIADB_ROOT_PASSWORD_FILE: /run/secrets/db_root_password
-      MARIADB_DATABASE: motiv_report
-      MARIADB_USER_FILE: /run/secrets/db_user
-      MARIADB_PASSWORD_FILE: /run/secrets/db_password
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/db_root_password
+      MYSQL_DATABASE: motiv_report
+      MYSQL_USER_FILE: /run/secrets/db_user
+      MYSQL_PASSWORD_FILE: /run/secrets/db_password
     volumes:
       - motiv_db_data:/var/lib/mysql
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
