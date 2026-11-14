@@ -13,9 +13,9 @@ public partial class Region
 
     public short TzOffsetMin { get; set; }
 
-    public virtual ICollection<Bt> Bts { get; set; } = new List<Bt>();
-
     public virtual ICollection<Incident> Incidents { get; set; } = new List<Incident>();
 
     public virtual ICollection<KpiThreshold> KpiThresholds { get; set; } = new List<KpiThreshold>();
+
+    public virtual ICollection<NetworkElement> NetworkElements { get; set; } = new List<NetworkElement>();
 }

@@ -17,5 +17,9 @@ public partial class VNetworkSnapshot
 
     public decimal? BtsProblem { get; set; }
 
+    public decimal? BtsMaintenance { get; set; }
+
+    public decimal? BtsDecommissioned { get; set; }
+
     public long CellTotal { get; set; }
 }

@@ -9,8 +9,6 @@ public partial class KpiCellHourly
 
     public DateTime TsHour { get; set; }
 
-    public ushort VendorId { get; set; }
-
     public ulong ConnAttempt { get; set; }
 
     public ulong ConnSuccess { get; set; }
@@ -28,6 +26,4 @@ public partial class KpiCellHourly
     public DateTime ComputedAt { get; set; }
 
     public virtual Cell Cell { get; set; } = null!;
-
-    public virtual Vendor Vendor { get; set; } = null!;
 }

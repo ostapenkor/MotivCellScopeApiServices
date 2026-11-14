@@ -19,5 +19,5 @@ public partial class VKpiThresholdsEffective
 
     public string Severity { get; set; } = null!;
 
-    public bool? Enabled { get; set; }
+    public sbyte Enabled { get; set; }
 }

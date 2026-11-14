@@ -31,7 +31,7 @@ public partial class Anomaly
 
     public string Status { get; set; } = null!;
 
-    public string? DedupHash { get; set; }
+    public string DedupHash { get; set; } = null!;
 
     public virtual Cell? Cell { get; set; }
 

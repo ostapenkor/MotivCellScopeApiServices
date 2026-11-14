@@ -27,13 +27,13 @@ public partial class VAnomaliesOpen
 
     public decimal? Score { get; set; }
 
-    public ulong? ExplainedByIncident { get; set; }
-
     public string Status { get; set; } = null!;
 
     public uint? BtsId { get; set; }
 
     public string? BtsCode { get; set; }
+
+    public string? BtsFullName { get; set; }
 
     public ushort? RegionId { get; set; }
 

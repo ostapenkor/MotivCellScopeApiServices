@@ -11,5 +11,11 @@ public partial class User
 
     public string PasswordHash { get; set; } = null!;
 
+    public string Role { get; set; } = null!;
+
     public DateTime CreatedAt { get; set; }
+
+    public virtual ICollection<AuditLog> AuditLogs { get; set; } = new List<AuditLog>();
+
+    public virtual ICollection<Incident> Incidents { get; set; } = new List<Incident>();
 }
