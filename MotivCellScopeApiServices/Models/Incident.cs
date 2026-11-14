@@ -31,13 +31,13 @@ public partial class Incident
 
     public DateTime? EndTime { get; set; }
 
-    public TimeOnly? Akb { get; set; }
+    public TimeSpan? Akb { get; set; }
 
-    public TimeOnly? Dgu { get; set; }
+    public TimeSpan? Dgu { get; set; }
 
     public string? Lenght { get; set; }
 
-    public TimeOnly? Prostoy { get; set; }
+    public TimeSpan? Prostoy { get; set; }
 
     public string? CommonProstoy { get; set; }
 
