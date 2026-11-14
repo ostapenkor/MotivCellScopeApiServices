@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using MotivCellScopeApiServices.Models;
 using System.Security.Claims;
+using System.Text;
 
 // For more information on enabling Web API for empty projects, visit https://go.microsoft.com/fwlink/?LinkID=397860
 
@@ -10,6 +11,7 @@ namespace MotivCellScopeApiServices.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
+    [Authorize]
     public class IncidentsController : ControllerBase
     {
         private readonly MotivReportDbContext _db;
@@ -21,7 +23,7 @@ namespace MotivCellScopeApiServices.Controllers
 
         // GET /api/incidents?from=2026-10-12T00:00:00Z&to=2026-11-11T00:00:00Z
         [HttpGet]
-        [Authorize]
+        
         public IActionResult GetIncidents([FromQuery] DateTime? from,[FromQuery] DateTime? to)
         {
             // 1. Валидация обязательных параметров периода
@@ -94,7 +96,6 @@ namespace MotivCellScopeApiServices.Controllers
 
         // GET /api/incidents/{id}
         [HttpGet("{id}")]
-        [Authorize]
         public IActionResult GetIncidentById(ulong id)
         {
             // Объединяем таблицу incidents (для получения всех *Id и updatedAt) 
@@ -553,6 +554,137 @@ namespace MotivCellScopeApiServices.Controllers
             return NoContent();
         }
 
+
+        // =========================================================================
+        // 2.6. GET /api/incidents/export
+        // =========================================================================
+        [HttpGet("export")]
+        public IActionResult ExportIncidents(
+            [FromQuery] DateTime? from,
+            [FromQuery] DateTime? to)
+        {
+            // 1. Валидация обязательных параметров периода
+            if (!from.HasValue || !to.HasValue)
+            {
+                return BadRequest(new { message = "Параметры 'from' и 'to' обязательны и должны быть в формате ISO 8601." });
+            }
+
+            if (from > to)
+            {
+                return BadRequest(new { message = "Дата начала 'from' не может быть больше даты окончания 'to'." });
+            }
+
+            var fromUtc = from.Value.ToUniversalTime();
+            var toUtc = to.Value.ToUniversalTime();
+
+            // 2. Выгружаем данные из представления v_incidents_full за период
+            var items = _db.VIncidentsFulls
+                .AsNoTracking()
+                .Where(v => v.BeginTime >= fromUtc && v.BeginTime <= toUtc)
+                .OrderByDescending(v => v.BeginTime)
+                .ToList();
+
+            // 3. Формируем содержимое CSV-файла
+            var sb = new StringBuilder();
+
+            // Заголовок таблицы строго по ТЗ
+            sb.AppendLine("Incident ID;PW;Направление;ТЦ;Приоритет;Тип сети;Сетевой элемент;Кол-во БС;Тип оборуд.;Тип аварии;Описание;Начало;Окончание;АКБ;ДГУ;Длительность;Простой;Общий простой;Уведомление;Комментарий;Район;Severity;Category");
+
+            foreach (var v in items)
+            {
+                // Приоритет отдаем ServElem, если пусто — берем NetworkElementName
+                var elementName = !string.IsNullOrEmpty(v.ServElem) ? v.ServElem : v.NetworkElementName;
+
+                var row = new[]
+                {
+            v.IncidentId.ToString(),
+            EscapeCsv(v.Pw),
+            EscapeCsv(v.DirectionCode),
+            EscapeCsv(v.TechCenterCode),
+            EscapeCsv(v.PriorityCode),
+            EscapeCsv(v.NetworkTypeCode),
+            EscapeCsv(elementName),
+            EscapeCsv(v.NumbRbs),
+            EscapeCsv(v.EquipmentTypeCode),
+            EscapeCsv(v.AlarmTypeCode),
+            EscapeCsv(v.Descr),
+            v.BeginTime.ToString("yyyy-MM-dd HH:mm"),
+            v.EndTime?.ToString("yyyy-MM-dd HH:mm") ?? "",
+            FormatTimeSpan(v.Akb) ?? "",
+            FormatTimeSpan(v.Dgu) ?? "",
+            EscapeCsv(v.Lenght),
+            FormatTimeSpan(v.Prostoy) ?? "",
+            EscapeCsv(v.CommonProstoy),
+            EscapeCsv(v.AlarmWho),
+            EscapeCsv(v.DescNotice),
+            EscapeCsv(v.AdminDistrict),
+            EscapeCsv(v.Severity),
+            EscapeCsv(v.Category)
+        };
+
+                sb.AppendLine(string.Join(";", row));
+            }
+
+            // 4. Кодируем в UTF-8 с BOM (new UTF8Encoding(true)), чтобы русский Excel открыл кириллицу без кракозябр
+            var utf8WithBom = new UTF8Encoding(encoderShouldEmitUTF8Identifier: true);
+            var csvBytes = utf8WithBom.GetBytes(sb.ToString());
+
+            // Формируем имя файла по датам периода: incidents_2026-11-01_2026-11-14.csv
+            var fileName = $"incidents_{fromUtc:yyyy-MM-dd}_{toUtc:yyyy-MM-dd}.csv";
+
+            // Метод File() сам проставит Content-Type и Content-Disposition: attachment; filename="..."
+            return File(csvBytes, "text/csv; charset=utf-8", fileName);
+        }
+
+        // =========================================================================
+        // 2.7. GET /api/incidents/{id}/anomalies
+        // =========================================================================
+        [HttpGet("{id}/anomalies")]
+        public IActionResult GetIncidentAnomalies(ulong id)
+        {
+            // 1. Проверяем, существует ли сам инцидент
+            bool incidentExists = _db.Incidents.Any(i => i.IncidentId == id);
+            if (!incidentExists)
+            {
+                return NotFound(new { error = "not_found" });
+            }
+
+            // 2. Загружаем все аномалии, объясненные этим инцидентом, подтягивая сектор и код БС
+            var rawAnomalies = (from a in _db.Anomalies.AsNoTracking()
+                                join c in _db.Cells.AsNoTracking() on a.CellId equals c.CellId into cellGroup
+                                from cell in cellGroup.DefaultIfEmpty()
+                                join ne in _db.NetworkElements.AsNoTracking() on cell.BtsId equals ne.Id into neGroup
+                                from netElem in neGroup.DefaultIfEmpty()
+                                where a.ExplainedByIncident == id
+                                orderby a.TsFrom descending
+                                select new
+                                {
+                                    Anomaly = a,
+                                    BtsCode = netElem != null ? netElem.Code : null,
+                                    Sector = cell != null ? cell.Sector : null
+                                }).ToList();
+
+            // 3. Маппинг в точный JSON-формат контракта
+            var result = rawAnomalies.Select(x => new
+            {
+                anomalyId = x.Anomaly.AnomalyId,
+                cellId = x.Anomaly.CellId,
+                btsCode = x.BtsCode,
+                sector = x.Sector,
+                anomalyType = x.Anomaly.AnomalyType,
+                kpiCode = x.Anomaly.KpiCode,
+                severity = x.Anomaly.Severity,
+                tsFrom = x.Anomaly.TsFrom.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                tsTo = x.Anomaly.TsTo.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                observedValue = x.Anomaly.ObservedValue,
+                expectedValue = x.Anomaly.ExpectedValue,
+                status = x.Anomaly.Status
+            }).ToList();
+
+            return Ok(result);
+        }
+
+
         // =========================================================================
         // Вспомогательные методы (добавьте в конец IncidentsController)
         // =========================================================================
@@ -607,6 +739,22 @@ namespace MotivCellScopeApiServices.Controllers
         {
             if (!ts.HasValue) return null;
             return $"{(int)ts.Value.TotalHours:D2}:{ts.Value.Minutes:D2}:{ts.Value.Seconds:D2}";
+        }
+
+        // =========================================================================
+        // Вспомогательный метод для экранирования спецсимволов в CSV
+        // =========================================================================
+        private static string EscapeCsv(string? value)
+        {
+            if (string.IsNullOrEmpty(value)) return "";
+
+            // Если в тексте есть точка с запятой, кавычки или перенос строки — оборачиваем в двойные кавычки
+            if (value.Contains(';') || value.Contains('"') || value.Contains('\n') || value.Contains('\r'))
+            {
+                return $"\"{value.Replace("\"", "\"\"")}\"";
+            }
+
+            return value;
         }
 
     }
