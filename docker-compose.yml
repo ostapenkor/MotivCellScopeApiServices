@@ -3,7 +3,7 @@ version: '3.8'
 services:
   # 1. Сервис базы данных MariaDB
   motiv-db:
-    image: mariadb:11
+    image: mariadb:10.1
     container_name: motiv_mariadb_container
     restart: always
     environment:
