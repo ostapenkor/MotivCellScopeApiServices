@@ -8,7 +8,7 @@ namespace MotivCellScopeApiServices.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize] // Доступно всем авторизованным (инженер, оператор, админ)
+[Authorize]
 public class ReportsController : ControllerBase
 {
     private readonly MotivReportDbContext _db;
@@ -50,41 +50,26 @@ public class ReportsController : ControllerBase
         });
     }
 
-    // 2. Детальный список за период для таблицы
-    // GET: /api/reports/incidents?from=...&to=...
-    [HttpGet("incidents")]
-    public IActionResult GetIncidentsReport(
-        [FromQuery] DateTime? from,
-        [FromQuery] DateTime? to,
-        [FromQuery] int page = 1,
-        [FromQuery] int pageSize = 50)
+    // 2. Доступные периоды (для настройки календаря на фронте)
+    // GET: /api/reports/available-periods
+    [HttpGet("available-periods")]
+    public IActionResult GetAvailablePeriods()
     {
-        var query = _db.Incidents.AsQueryable();
+        // Проверяем, есть ли вообще данные в таблице
+        if (!_db.Incidents.Any())
+        {
+            return Ok(new { minBeginTime = (DateTime?)null, maxBeginTime = (DateTime?)null });
+        }
 
-        if (from.HasValue) query = query.Where(i => i.BeginTime >= from.Value);
-        if (to.HasValue) query = query.Where(i => i.BeginTime <= to.Value);
+        // Находим самую раннюю и самую позднюю дату начала аварии
+        var minDate = _db.Incidents.Min(i => i.BeginTime);
+        var maxDate = _db.Incidents.Max(i => i.BeginTime);
 
-        var total = query.Count();
-
-        // Берем только нужные для отчета поля
-        var items = query
-            .OrderByDescending(i => i.BeginTime)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
-            .Select(i => new {
-                i.IncidentId,
-                i.Pw,
-                i.Descr,
-                i.BeginTime,
-                i.EndTime,
-                i.Lenght,
-                i.CommonProstoy,
-                Category = i.Category.ToString(),
-                Severity = i.Severity.ToString()
-            })
-            .ToList();
-
-        return Ok(new { total, page, pageSize, items });
+        return Ok(new
+        {
+            minBeginTime = minDate,
+            maxBeginTime = maxDate
+        });
     }
 
     // 3. Выгрузка отчета в CSV
