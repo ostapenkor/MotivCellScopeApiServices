@@ -1,3 +1,5 @@
+using MotivCellScopeApiServices.Controllers;
+using MySqlConnector;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -24,7 +26,12 @@ var dbPassword = builder.Configuration["db_password"];
 var jwtKey = builder.Configuration["jwt_key"];
 
 // 4. Склеиваем всё в одну полноценную строку подключения программно
-var finalConnectionString = $"{baseConnectionString}user={dbUser};password={dbPassword};";
+var connectionBuilder = new MySqlConnectionStringBuilder(baseConnectionString)
+{
+    UserID = dbUser,
+    Password = dbPassword ?? ""
+};
+var finalConnectionString = connectionBuilder.ConnectionString;
 
 // 3. Кладем прочитанный ключ в память конфигурации, чтобы AuthController и JwtBearer его увидели
 builder.Configuration["Jwt:Key"] = jwtKey;
@@ -33,11 +40,19 @@ builder.Configuration["Jwt:Key"] = jwtKey;
 builder.Services.AddDbContext<MotivReportDbContext>(options =>
     options.UseMySql(
         finalConnectionString,
-        ServerVersion.AutoDetect(finalConnectionString),
+        new MariaDbServerVersion(builder.Configuration["Database:Version"] ?? "10.1"),
         mySqlOptions => mySqlOptions.EnableRetryOnFailure()
     ));
 
-builder.Services.AddControllers();
+builder.Services.AddControllers(options => options.Filters.Add<ReferenceController.ApiExceptionFilter>())
+    .ConfigureApiBehaviorOptions(options => options.InvalidModelStateResponseFactory = context =>
+        new Microsoft.AspNetCore.Mvc.BadRequestObjectResult(new {
+            error = "validation_failed",
+            message = "Проверьте параметры запроса.",
+            fields = context.ModelState.Where(x => x.Value?.Errors.Count > 0)
+                .ToDictionary(x => x.Key, x => x.Value!.Errors.Select(e => e.ErrorMessage).ToArray())
+        }));
+builder.Services.AddAuthorization();
 builder.Services.AddEndpointsApiExplorer();
 
 //код который позволяет в swagger, авторизоваться и вставить токен
@@ -97,7 +112,8 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-app.UseHttpsRedirection();
+if (builder.Configuration.GetValue<bool>("Http:RedirectToHttps"))
+    app.UseHttpsRedirection();
 
 
 app.UseAuthentication();

@@ -368,3 +368,8 @@ FodyWeavers.xsd
 /db_root_password.txt
 /db_user.txt
 /.env
+
+# Local-only runtime settings and backups
+.env
+.env.case
+*.sql.backup

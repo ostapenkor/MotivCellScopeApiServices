@@ -28,3 +28,9 @@ README.md
 !.git/config
 !.git/packed-refs
 !.git/refs/heads/**
+
+# Отдельный PHP-сайт и документация не входят в образ API.
+php-site
+docs
+tests
+**/.env*

@@ -1,63 +1,69 @@
-version: '3.8'
-
 services:
-  # 1. Сервис базы данных MariaDB
   motiv-db:
     image: mariadb:10.1
     container_name: motiv_mariadb_container
-    restart: always
+    restart: unless-stopped
     environment:
-      # Говорим MariaDB читать пароли из секретных файлов в памяти (Рекомендация из видео)
       MYSQL_ROOT_PASSWORD_FILE: /run/secrets/db_root_password
       MYSQL_DATABASE: motiv_report
       MYSQL_USER_FILE: /run/secrets/db_user
       MYSQL_PASSWORD_FILE: /run/secrets/db_password
+      TZ: UTC
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci", "--sql-mode=STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION"]
     volumes:
       - motiv_db_data:/var/lib/mysql
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-    secrets:
-      - db_root_password
-      - db_user
-      - db_password
-    ports: 
-      - "3306:3306"
-    networks:
-      - motiv-backend-net
-
-  
+      - ./init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    secrets: [db_root_password, db_user, db_password]
+    ports: ["127.0.0.1:${DB_PORT:-3306}:3306"]
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=$$(cat /run/secrets/db_password) mysql -u$$(cat /run/secrets/db_user) -D motiv_report -N -e \"SELECT COUNT(*) FROM information_schema.routines WHERE routine_schema=DATABASE() AND routine_type='PROCEDURE'\" | grep -q '^3$$'"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+    networks: [motiv-backend-net]
 
   motivcellscopeapiservices:
-    image: ${DOCKER_REGISTRY-}motivcellscopeapiservices
+    image: motiv-api-sync:latest
     container_name: motiv_api_container
+    restart: unless-stopped
     build:
       context: .
       dockerfile: MotivCellScopeApiServices/Dockerfile
-    ports:
-      - "8080:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+      Database__Version: "10.1"
+      Http__RedirectToHttps: "false"
+      Monitoring__ExposeCoordinates: "false"
+      TZ: UTC
+    ports: ["127.0.0.1:${API_PORT:-8080}:8080"]
     depends_on:
-      - motiv-db
-    secrets:
-      - db_user
-      - db_password   
-      - jwt_key
+      motiv-db: {condition: service_healthy}
+    secrets: [db_user, db_password, jwt_key]
     networks:
-      - motiv-backend-net
+      motiv-backend-net:
+        aliases: [api]
 
-# Глобальное объявление секретов (Inline-метод, который на 100% поддерживает Visual Studio)
+  php-site:
+    image: motiv-php-site:latest
+    restart: unless-stopped
+    build:
+      context: ./php-site
+    environment:
+      API_BASE_URL: http://api:8080
+    ports: ["127.0.0.1:${SITE_PORT:-5092}:8080"]
+    depends_on: [motivcellscopeapiservices]
+    networks: [motiv-backend-net]
+
 secrets:
-  db_root_password:
-    environment: "DB_ROOT_PASSWORD"
-  db_user:
-    environment: "DB_USER"
-  db_password:
-    environment: "DB_PASSWORD"
-  jwt_key:
-    environment: "JWT_SECRET_KEY"
-
+  db_root_password: {environment: DB_ROOT_PASSWORD}
+  db_user: {environment: DB_USER}
+  db_password: {environment: DB_PASSWORD}
+  jwt_key: {environment: JWT_SECRET_KEY}
 volumes:
   motiv_db_data:
-
+    # Новая схема main aff0a9f: старый том MariaDB 11 здесь не используется.
+    name: motiv_report_main_aff0a9f
 networks:
   motiv-backend-net:
     driver: bridge
-
