@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using MotivCellScopeApiServices.Models;
+using MotivCellScopeApiServices.Services;
 using System.Diagnostics;
 using System.Security.Claims;
 
@@ -16,10 +17,13 @@ namespace MotivCellScopeApiServices.Controllers
     {
         private readonly MotivReportDbContext _db;
 
-        public MonitoringController(MotivReportDbContext db)
+        public MonitoringController(MotivReportDbContext db, AuditService audit)
         {
             _db = db;
+            _audit = audit;
         }
+
+        private readonly AuditService _audit;
 
         // =========================================================================
         // 4.1. GET /api/monitoring/summary
@@ -511,13 +515,37 @@ namespace MotivCellScopeApiServices.Controllers
         public IActionResult DetectAnomalies([FromBody] MonitoringDetectRequest request)
         {
             var sw = Stopwatch.StartNew();
-            _db.Database.SetCommandTimeout(120);
+            _db.Database.SetCommandTimeout(180); // Увеличиваем таймаут до 3 минут на выполнение двух процедур
+
+            // 1. Замеряем общее количество аномалий ДО запуска процедур
             int countBefore = _db.Anomalies.Count();
-            int affectedRows = _db.Database.ExecuteSqlRaw("CALL sp_detect_anomalies({0});", request.HoursBack);
+
+            // 2. Вызываем первую процедуру (пороги и z-score по KPI)
+            int affectedMain = _db.Database.ExecuteSqlRaw("CALL sp_detect_anomalies({0});", request.HoursBack);
+
+            // 3. Вычисляем границы периода для второй процедуры (аналог @now_h из вашего SQL-скрипта)
+            var nowUtc = DateTime.UtcNow;
+            // Округляем до начала текущего часа, как это делает @now_h в SQL
+            var nowHour = new DateTime(nowUtc.Year, nowUtc.Month, nowUtc.Day, nowUtc.Hour, 0, 0, DateTimeKind.Utc);
+
+            var fromStr = nowHour.AddHours(-request.HoursBack).ToString("yyyy-MM-dd HH:mm:ss");
+            var toStr = nowHour.AddHours(1).ToString("yyyy-MM-dd HH:mm:ss");
+
+            // 4. Вызываем вторую процедуру (аномалии доступности / отсутствия данных)
+            int affectedAvail = _db.Database.ExecuteSqlRaw(
+                "CALL sp_detect_availability_anomalies({0}, {1});", fromStr, toStr);
+
+            // 5. Считаем итоговое количество найденных аномалий ПОСЛЕ обеих процедур
             int countAfter = _db.Anomalies.Count();
             int newlyFound = Math.Max(0, countAfter - countBefore);
-            int processedCount = affectedRows > 0 ? affectedRows : newlyFound;
-            WriteAuditLog("detect_anomalies", "anomaly", null);
+
+            int totalAffected = Math.Max(0, affectedMain) + Math.Max(0, affectedAvail);
+            int processedCount = totalAffected > 0 ? totalAffected : newlyFound;
+
+            // 6. Фиксируем оба действия в журнале аудита
+            _audit.Log("detect_anomalies", "anomaly");
+            _audit.Log("detect_availability_anomalies", "anomaly");
+
             sw.Stop();
             return Ok(new
             {
@@ -544,7 +572,7 @@ namespace MotivCellScopeApiServices.Controllers
             {
                 affectedRows = _db.KpiCellHourlies.Count(k => k.TsHour >= fromUtc && k.TsHour <= toUtc);
             }
-            WriteAuditLog("refresh_kpi", "kpi", null);
+            _audit.Log("refresh_kpi", "kpi", null);
             sw.Stop();
             return Ok(new
             {
@@ -562,34 +590,7 @@ namespace MotivCellScopeApiServices.Controllers
             "info" => 1,
             _ => 0
         };
-        private void WriteAuditLog(string action, string entityType, ulong? entityId)
-        {
-            try
-            {
-                var userIdStr = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-                uint? userId = uint.TryParse(userIdStr, out uint uid) ? uid : null;
-                var username = User.FindFirst(ClaimTypes.Name)?.Value ?? "unknown";
-                var role = User.FindFirst(ClaimTypes.Role)?.Value;
-                var log = new AuditLog
-                {
-                    Ts = DateTime.UtcNow,
-                    UserId = userId,
-                    Username = username,
-                    Role = role,
-                    Action = action,
-                    EntityType = entityType,
-                    EntityId = entityId,
-                    IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString(),
-                    Success = true
-                };
-                _db.AuditLogs.Add(log);
-                _db.SaveChanges();
-            }
-            catch
-            {
-                // Не прерываем ответ при ошибке записи аудита
-            }
-        }
+       
     }
     public class MonitoringDetectRequest
     {
