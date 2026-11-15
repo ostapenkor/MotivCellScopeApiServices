@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using MotivCellScopeApiServices.Models;
+using MotivCellScopeApiServices.Services;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
@@ -20,18 +21,19 @@ namespace MotivCellScopeApiServices.Controllers
         private readonly IConfiguration _config;
         private readonly MotivReportDbContext _db;
 
-        public AuthController(IConfiguration config,MotivReportDbContext db)
+        private readonly AuditService _audit;
+
+        public AuthController(IConfiguration config,MotivReportDbContext db,AuditService audit)
         {
             _config = config;
             _db = db;
+            _audit = audit;
         }
 
         // POST /api/auth/login
         [HttpPost("login")]
         public IActionResult Login([FromBody] LoginRequest request)
         {
-            // Получаем IP-адрес клиента для записи в audit_log
-            var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
 
             // 1. Ищем пользователя в таблице users
             var user = _db.Users.FirstOrDefault(u => u.Username == request.Username);
@@ -44,12 +46,20 @@ namespace MotivCellScopeApiServices.Controllers
             if (!isPasswordValid)
             {
                 // Пишем неудачную попытку входа в audit_log (согласно схеме: action='login', success=0)
-                WriteLoginAudit(user?.UserId, request.Username, user?.Role, ipAddress, success: false);
+                _audit.Log("login", "user", (ulong?)user?.UserId,
+                        success: false,
+                        overrideUsername: request.Username,
+                        overrideUserId: user?.UserId,
+                        overrideRole: user?.Role);
                 return Unauthorized(new { message = "Неверный логин или пароль" });
             }
 
             // 3. Пишем успешный вход в audit_log
-            WriteLoginAudit(user!.UserId, user.Username, user.Role, ipAddress, success: true);
+            _audit.Log("login", "user", (ulong?)user!.UserId,
+                        success: true,
+                        overrideUsername: user.Username,
+                        overrideUserId: user.UserId,
+                        overrideRole: user.Role);
 
             // 4. Генерируем JWT-токен с зашитой внутри ролью
             var expiresAt = DateTime.UtcNow.AddHours(2);
@@ -113,33 +123,6 @@ namespace MotivCellScopeApiServices.Controllers
                 signingCredentials: credentials);
 
             return new JwtSecurityTokenHandler().WriteToken(token);
-        }
-        private void WriteLoginAudit(uint? userId, string username, string? role, string? ip, bool success)
-        {
-            try
-            {
-                // Используем модель AuditLog, которая сгенерировалась при скаффолдинге
-                var log = new AuditLog
-                {
-                    Ts = DateTime.UtcNow,
-                    UserId = userId,
-                    Username = username,
-                    Role = role,
-                    Action = "login", // Значение из ENUM таблицы audit_log
-                    EntityType = "user",
-                    EntityId = userId,
-                    IpAddress = ip,
-                    Success = success // Если EF сгенерировал sbyte/bool, поправьте на (sbyte)(success ? 1 : 0) при необходимости
-                };
-
-                _db.AuditLogs.Add(log);
-                _db.SaveChanges();
-            }
-            catch
-            {
-                // Не роняем авторизацию при сбое логирования
-                //TODO сделать внутренний лог с ошибками
-            }
         }
 
     }

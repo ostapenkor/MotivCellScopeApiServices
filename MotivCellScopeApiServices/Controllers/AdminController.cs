@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using MotivCellScopeApiServices.Models;
+using MotivCellScopeApiServices.Services;
 using System.Diagnostics;
 using System.Security.Claims;
 
@@ -15,10 +16,12 @@ namespace MotivCellScopeApiServices.Controllers
     public class AdminController : ControllerBase
     {
         private readonly MotivReportDbContext _db;
+        private readonly AuditService _audit;
 
-        public AdminController(MotivReportDbContext db)
+        public AdminController(MotivReportDbContext db, AuditService audit)
         {
             _db = db;
+            _audit = audit;
         }
 
         // =========================================================================
@@ -113,6 +116,8 @@ namespace MotivCellScopeApiServices.Controllers
                 })
                 .ToList();
 
+            _audit.Log("view_users", "user", null,true);
+
             return Ok(users);
         }
 
@@ -162,7 +167,7 @@ namespace MotivCellScopeApiServices.Controllers
             _db.SaveChanges();
 
             // 4. Пишем событие создания пользователя в audit_log
-            WriteUserCreationAudit(newUser.UserId, newUser.Username);
+            _audit.Log("create_user", "user", newUser.UserId, true);
 
             // 5. Возвращаем 201 Created со структурой из ТЗ
             return Created($"/api/admin/users/{newUser.UserId}", new
@@ -171,40 +176,6 @@ namespace MotivCellScopeApiServices.Controllers
                 username = newUser.Username,
                 role = newUser.Role
             });
-        }
-
-        // Вспомогательный метод для записи в audit_log при создании пользователя
-        private void WriteUserCreationAudit(uint createdUserId, string createdUsername)
-        {
-            try
-            {
-                var adminIdStr = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-                uint? adminId = uint.TryParse(adminIdStr, out uint uid) ? uid : null;
-                var adminName = User.FindFirst(ClaimTypes.Name)?.Value ?? "admin";
-                var adminRole = User.FindFirst(ClaimTypes.Role)?.Value ?? "admin";
-
-                var log = new AuditLog
-                {
-                    Ts = DateTime.UtcNow,
-                    UserId = adminId,
-                    Username = adminName,
-                    Role = adminRole,
-                    // Примечание: в вашей SQL-схеме ENUM action содержит ('login','create_incident','update_incident','delete_incident','detect_anomalies','refresh_kpi').
-                    // Если в базе ENUM еще не расширен значением 'create_user', MariaDB может отклонить вставку, поэтому блок обернут в try-catch.
-                    Action = "create_user",
-                    EntityType = "user",
-                    EntityId = createdUserId,
-                    IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString(),
-                    Success = true
-                };
-
-                _db.AuditLogs.Add(log);
-                _db.SaveChanges();
-            }
-            catch
-            {
-                // Если ENUM в таблице audit_log строгий и не содержит 'create_user', не роняем основной запрос 201 Created
-            }
         }
 
     }

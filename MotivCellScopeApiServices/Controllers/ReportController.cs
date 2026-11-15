@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using MotivCellScopeApiServices.Models;
+using MotivCellScopeApiServices.Services;
 using System.Text;
 
 namespace MotivCellScopeApiServices.Controllers;
@@ -13,11 +14,13 @@ public class ReportsController : ControllerBase
 {
     private readonly MotivReportDbContext _db;
 
-    public ReportsController(MotivReportDbContext db)
+    public ReportsController(MotivReportDbContext db, AuditService audit)
     {
         _db = db;
+        _audit = audit;
     }
 
+    private readonly AuditService _audit;
     // 1. Сводка за период (для карточек на сайте)
     // GET: /api/reports/summary?from=2026-11-01&to=2026-11-30
     [HttpGet("summary")]
@@ -97,6 +100,8 @@ public class ReportsController : ControllerBase
 
         // UTF-8 BOM для корректного отображения кириллицы в Excel
         var bytes = Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(csv.ToString())).ToArray();
+
+        _audit.Log("export_report", "report", null);
 
         return File(bytes, "text/csv", $"report_{DateTime.UtcNow:yyyyMMdd}.csv");
     }

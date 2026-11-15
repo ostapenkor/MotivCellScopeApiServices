@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using MotivCellScopeApiServices.Models;
+using MotivCellScopeApiServices.Services;
 using System.Security.Claims;
 using System.Text;
 
@@ -15,10 +16,11 @@ namespace MotivCellScopeApiServices.Controllers
     public class IncidentsController : ControllerBase
     {
         private readonly MotivReportDbContext _db;
-
-        public IncidentsController(MotivReportDbContext db)
+        private readonly AuditService _audit;
+        public IncidentsController(MotivReportDbContext db, AuditService audit)
         {
             _db = db;
+            _audit = audit;
         }
 
         // GET /api/incidents?from=2026-10-12T00:00:00Z&to=2026-11-11T00:00:00Z
@@ -283,7 +285,7 @@ namespace MotivCellScopeApiServices.Controllers
             _db.SaveChanges(); // После SaveChanges в newIncident.IncidentId появится сгенерированный ID
 
             // 5. Записываем событие в audit_log
-            WriteIncidentAudit(currentUserId, currentUsername, currentRole, "create_incident", newIncident.IncidentId);
+            _audit.Log("create_incident", "incident", newIncident.IncidentId);
 
             // 6. Получаем полный DTO через представление v_incidents_full (как в GET /{id})
             var createdItem = (from i in _db.Incidents.AsNoTracking()
@@ -457,7 +459,7 @@ namespace MotivCellScopeApiServices.Controllers
             var currentUsername = User.FindFirst(ClaimTypes.Name)?.Value ?? "unknown";
             var currentRole = User.FindFirst(ClaimTypes.Role)?.Value;
 
-            WriteIncidentAudit(currentUserId, currentUsername, currentRole, "update_incident", existingIncident.IncidentId);
+            _audit.Log("update_incident", "incident", existingIncident.IncidentId);
 
             // 7. Загружаем обновленный DTO через представление v_incidents_full и возвращаем 200 OK
             var updatedItem = (from i in _db.Incidents.AsNoTracking()
@@ -548,7 +550,7 @@ namespace MotivCellScopeApiServices.Controllers
             var currentUsername = User.FindFirst(ClaimTypes.Name)?.Value ?? "unknown";
             var currentRole = User.FindFirst(ClaimTypes.Role)?.Value;
 
-            WriteIncidentAudit(currentUserId, currentUsername, currentRole, "delete_incident", id);
+            _audit.Log("delete_incident", "incident", id);
 
             // 5. Возвращаем 204 No Content с пустым телом
             return NoContent();
@@ -632,6 +634,8 @@ namespace MotivCellScopeApiServices.Controllers
             // Формируем имя файла по датам периода: incidents_2026-11-01_2026-11-14.csv
             var fileName = $"incidents_{fromUtc:yyyy-MM-dd}_{toUtc:yyyy-MM-dd}.csv";
 
+            _audit.Log("export_incidents", "incident", null);
+
             // Метод File() сам проставит Content-Type и Content-Disposition: attachment; filename="..."
             return File(csvBytes, "text/csv; charset=utf-8", fileName);
         }
@@ -709,31 +713,7 @@ namespace MotivCellScopeApiServices.Controllers
             return null;
         }
 
-        private void WriteIncidentAudit(uint? userId, string username, string? role, string action, ulong incidentId)
-        {
-            try
-            {
-                var log = new AuditLog
-                {
-                    Ts = DateTime.UtcNow,
-                    UserId = userId,
-                    Username = username,
-                    Role = role,
-                    Action = action,
-                    EntityType = "incident",
-                    EntityId = incidentId,
-                    IpAddress = HttpContext.Connection.RemoteIpAddress?.ToString(),
-                    Success = true
-                };
-
-                _db.AuditLogs.Add(log);
-                _db.SaveChanges();
-            }
-            catch
-            {
-                // Не ломаем основной ответ при ошибке записи аудита
-            }
-        }
+        
         // Вспомогательный метод для корректного вывода интервалов > 24 часов (например, "48:00:00")
         private string? FormatTimeSpan(TimeSpan? ts)
         {

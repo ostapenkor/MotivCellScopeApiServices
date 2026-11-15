@@ -325,8 +325,9 @@ CREATE TABLE audit_log (
   username     VARCHAR(64)     NOT NULL,
   role         VARCHAR(16)     NULL,
   action       ENUM(
-                 'login','create_incident','update_incident','delete_incident',
-                 'detect_anomalies','refresh_kpi'
+                 'login','create_user','create_incident','update_incident','delete_incident',
+                 'explain_anomaly','update_anomaly_status','export_incidents','export_report',
+                 'view_audit_log','view_users','detect_anomalies','detect_availability_anomalies','refresh_kpi'
                ) NOT NULL,
   entity_type  VARCHAR(32)     NULL,
   entity_id    BIGINT UNSIGNED NULL,
