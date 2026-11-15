@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using MotivCellScopeApiServices.Models;
+using MotivCellScopeApiServices.Services;
 
 // For more information on enabling Web API for empty projects, visit https://go.microsoft.com/fwlink/?LinkID=397860
 
@@ -14,10 +15,15 @@ namespace MotivCellScopeApiServices.Controllers
     {
         private readonly MotivReportDbContext _db;
 
-        public AnomaliesController(MotivReportDbContext db)
+        
+
+        public AnomaliesController(MotivReportDbContext db, AuditService audit)
         {
             _db = db;
+            _audit = audit;
         }
+
+        private readonly AuditService _audit;
 
         // =========================================================================
         // GET /api/monitoring/anomalies (и /api/anomalies)
@@ -237,6 +243,8 @@ namespace MotivCellScopeApiServices.Controllers
             anomaly.ExplainedByIncident = request.IncidentId;
             anomaly.Status = "explained";
             _db.SaveChanges();
+
+            _audit.Log("explain_anomaly", "anomaly", id);
             return Ok(new
             {
                 anomalyId = anomaly.AnomalyId,
@@ -270,6 +278,8 @@ namespace MotivCellScopeApiServices.Controllers
                 anomaly.ExplainedByIncident = null;
             }
             _db.SaveChanges();
+
+            _audit.Log("update_anomaly_status", "anomaly", id);
             return Ok(new
             {
                 anomalyId = anomaly.AnomalyId,

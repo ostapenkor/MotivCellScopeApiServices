@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using MotivCellScopeApiServices.Models;
+using MotivCellScopeApiServices.Services;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -87,6 +88,10 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]!))
         };
     });
+
+
+builder.Services.AddHttpContextAccessor(); // <-- Обязательно, чтобы сервис видел текущий HTTP-запрос и IP
+builder.Services.AddScoped<AuditService>();  // <-- Регистрируем наш единый сервис аудита
 
 var app = builder.Build();
 

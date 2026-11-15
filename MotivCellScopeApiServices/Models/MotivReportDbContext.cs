@@ -183,8 +183,8 @@ public partial class MotivReportDbContext : DbContext
                 .HasColumnType("bigint(20) unsigned")
                 .HasColumnName("audit_id");
             entity.Property(e => e.Action)
-                .HasColumnType("enum('login','create_incident','update_incident','delete_incident','detect_anomalies','refresh_kpi')")
-                .HasColumnName("action");
+    .HasColumnType("enum('login','create_user','create_incident','update_incident','delete_incident','explain_anomaly','update_anomaly_status','export_incidents','export_report','view_audit_log','view_users','detect_anomalies','detect_availability_anomalies','refresh_kpi')")
+    .HasColumnName("action");
             entity.Property(e => e.EntityId)
                 .HasColumnType("bigint(20) unsigned")
                 .HasColumnName("entity_id");
