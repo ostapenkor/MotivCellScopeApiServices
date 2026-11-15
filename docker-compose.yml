@@ -43,6 +43,23 @@ services:
     networks:
       - motiv-backend-net
 
+  # 3. PHP-сайт поверх REST API (серверный рендеринг, JWT только в PHP-сессии)
+  motiv-web:
+    image: php:8.3-apache
+    container_name: motiv_web_container
+    restart: unless-stopped
+    volumes:
+      - ./website:/var/www/html
+      - ./website/apache-vhost.conf:/etc/apache2/sites-available/000-default.conf:ro
+    environment:
+      - API_BASE_URL=http://motivcellscopeapiservices:8080
+    ports:
+      - "8000:80"
+    depends_on:
+      - motivcellscopeapiservices
+    networks:
+      - motiv-backend-net
+
 # Глобальное объявление секретов (Inline-метод, который на 100% поддерживает Visual Studio)
 secrets:
   db_root_password:
