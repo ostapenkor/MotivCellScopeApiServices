@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # 1. Сервис базы данных MariaDB
   motiv-db:
@@ -7,7 +5,6 @@ services:
     container_name: motiv_mariadb_container
     restart: always
     environment:
-      # Говорим MariaDB читать пароли из секретных файлов в памяти (Рекомендация из видео)
       MYSQL_ROOT_PASSWORD_FILE: /run/secrets/db_root_password
       MYSQL_DATABASE: motiv_report
       MYSQL_USER_FILE: /run/secrets/db_user
@@ -19,13 +16,13 @@ services:
       - db_root_password
       - db_user
       - db_password
-    ports: 
+    ports:
       - "3306:3306"
     networks:
       - motiv-backend-net
+      
 
-  
-
+  # 2. ASP.NET Core API
   motivcellscopeapiservices:
     image: ${DOCKER_REGISTRY-}motivcellscopeapiservices
     container_name: motiv_api_container
@@ -38,12 +35,29 @@ services:
       - motiv-db
     secrets:
       - db_user
-      - db_password   
+      - db_password
       - jwt_key
     networks:
       - motiv-backend-net
+      - motiv-frontend-net
 
-# Глобальное объявление секретов (Inline-метод, который на 100% поддерживает Visual Studio)
+  # 3. PHP-сайт поверх REST API
+  motiv-web:
+    image: php:8.3-apache
+    container_name: motiv_web_container
+    restart: unless-stopped
+    volumes:
+      - ./website:/var/www/html
+      - ./website/apache-vhost.conf:/etc/apache2/sites-available/000-default.conf:ro
+    environment:
+      - API_BASE_URL=http://motivcellscopeapiservices:8080
+    ports:
+      - "8000:80"
+    depends_on:
+      - motivcellscopeapiservices
+    networks:
+      - motiv-frontend-net
+
 secrets:
   db_root_password:
     environment: "DB_ROOT_PASSWORD"
@@ -60,4 +74,5 @@ volumes:
 networks:
   motiv-backend-net:
     driver: bridge
-
+  motiv-frontend-net:
+    driver: bridge
