@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   # 1. Сервис базы данных MariaDB
   motiv-db:
@@ -5,6 +7,7 @@ services:
     container_name: motiv_mariadb_container
     restart: always
     environment:
+      # Говорим MariaDB читать пароли из секретных файлов в памяти (Рекомендация из видео)
       MYSQL_ROOT_PASSWORD_FILE: /run/secrets/db_root_password
       MYSQL_DATABASE: motiv_report
       MYSQL_USER_FILE: /run/secrets/db_user
@@ -16,32 +19,35 @@ services:
       - db_root_password
       - db_user
       - db_password
-    ports:
+    ports: 
       - "3306:3306"
     networks:
       - motiv-backend-net
-      
 
-  # 2. ASP.NET Core API
+  
+
   motivcellscopeapiservices:
     image: ${DOCKER_REGISTRY-}motivcellscopeapiservices
     container_name: motiv_api_container
     build:
       context: .
       dockerfile: MotivCellScopeApiServices/Dockerfile
+    environment:
+      # Только HTTP внутри docker-сети: иначе UseHttpsRedirection отвечает
+      # внутренним вызовам (PHP -> API) редиректом 307 на HTTPS.
+      - ASPNETCORE_URLS=http://+:8080
     ports:
       - "8080:8080"
     depends_on:
       - motiv-db
     secrets:
       - db_user
-      - db_password
+      - db_password   
       - jwt_key
     networks:
       - motiv-backend-net
-      - motiv-frontend-net
 
-  # 3. PHP-сайт поверх REST API
+  # 3. PHP-сайт поверх REST API (серверный рендеринг, JWT только в PHP-сессии)
   motiv-web:
     image: php:8.3-apache
     container_name: motiv_web_container
@@ -56,8 +62,9 @@ services:
     depends_on:
       - motivcellscopeapiservices
     networks:
-      - motiv-frontend-net
+      - motiv-backend-net
 
+# Глобальное объявление секретов (Inline-метод, который на 100% поддерживает Visual Studio)
 secrets:
   db_root_password:
     environment: "DB_ROOT_PASSWORD"
@@ -73,6 +80,5 @@ volumes:
 
 networks:
   motiv-backend-net:
-    driver: bridged
-  motiv-frontend-net:
     driver: bridge
+
