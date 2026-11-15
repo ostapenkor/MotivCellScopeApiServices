@@ -368,3 +368,4 @@ FodyWeavers.xsd
 /db_root_password.txt
 /db_user.txt
 /.env
+/website/.env

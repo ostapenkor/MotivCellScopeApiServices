@@ -73,6 +73,6 @@ volumes:
 
 networks:
   motiv-backend-net:
-    driver: bridge
+    driver: bridged
   motiv-frontend-net:
     driver: bridge
