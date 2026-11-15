@@ -32,6 +32,10 @@ services:
     build:
       context: .
       dockerfile: MotivCellScopeApiServices/Dockerfile
+    environment:
+      # Только HTTP внутри docker-сети: иначе UseHttpsRedirection отвечает
+      # внутренним вызовам (PHP -> API) редиректом 307 на HTTPS.
+      - ASPNETCORE_URLS=http://+:8080
     ports:
       - "8080:8080"
     depends_on:
