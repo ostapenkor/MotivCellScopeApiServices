@@ -37,6 +37,11 @@ final class ApiClient
         if ($errno) {
             return ['status' => 0, 'body' => null, 'error' => 'API недоступен: ' . $error];
         }
+        if ($status >= 300 && $status < 400) {
+            // Обычно — UseHttpsRedirection на стороне API при внутреннем HTTP-вызове.
+            return ['status' => $status, 'body' => null,
+                    'error' => 'API вернул перенаправление (HTTP ' . $status . '), а не ответ. Проверьте, что API внутри сети слушает HTTP (ASPNETCORE_URLS=http://+:8080).'];
+        }
 
         return ['status' => $status, 'body' => $raw ? json_decode($raw, true) : null, 'error' => null];
     }
