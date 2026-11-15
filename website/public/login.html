@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Вход - Мотив</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="login-body">
+
+    <div class="login-card">
+        <div class="login-logo">📡 Мотив</div>
+        <div class="login-sub">Вход в систему отчетности</div>
+        
+        <label>Логин</label>
+        <input type="text" placeholder="Введите логин..." value="admin">
+        
+        <label>Пароль</label>
+        <input type="password" placeholder="••••••••" value="12345">
+        
+        <label>Войти как:</label>
+        <select id="role-select">
+            <option value="admin">Администратор</option>
+            <option value="engineer">Инженер</option>
+            <option value="operator">Дежурный</option>
+        </select>
+        
+        <button class="btn-login" onclick="doLogin()">Войти в систему</button>
+    </div>
+
+    <script>
+        function doLogin() {
+            const role = document.getElementById('role-select').value;
+            localStorage.setItem('userRole', role); // Сохраняем роль в браузере
+            window.location.href = 'dashboard.html'; // Переходим на дашборд
+        }
+    </script>
+</body>
+</html>
